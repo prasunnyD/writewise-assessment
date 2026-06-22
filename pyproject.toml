@@ -29,6 +29,7 @@ writewise-eval = "eval.__main__:app"
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=8.0.0"
+python-docx = "^1.2.0"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

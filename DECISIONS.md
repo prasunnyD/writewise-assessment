@@ -11,6 +11,8 @@
 
 Fee schedule data is pricing-model agnostic (no `pricing_model_id`, `network_id`, or year columns), so it does not belong in `contract_terms`. Sub-headings such as "Additional Administrative Services" are stored in `category` for filtering and audit.
 
+Migration `004_extend_included_services.sql` moved legacy `allowance` / `ancillary_fee` rows out of `contract_terms` into `included_services` and tightened the `term_category` check to grid terms only.
+
 Why a unified row shape for values:
 
 - The PDF mixes units ($/claim, PMPM, AWP-%, flat annual). `basis_type`, `value_type`, and `value_text` preserve meaning without schema churn.
@@ -20,17 +22,17 @@ Non-numeric values use `value_type` (`included`, `quoted_upon_request`, `pass_th
 
 Rebate payment timing is a first-class field (`payment_schedule`, `payment_timing_text`) because two otherwise identical rebate grids differ only by quarterly vs monthly payment.
 
+**Reference tables** (`networks`, `pricing_models`) are seeded minimally in migration `001` and upserted from extraction at load time. Migration `003` removed the vendor-specific `northwind_direct_specialty` seed so new vendors are not tied to sample-PDF network names.
+
 ## Raw document storage
 
-**`documents.raw_markdown`** stores the full PDF as markdown at extraction time via [Markitdown](https://github.com/microsoft/markitdown).
+**`documents.raw_markdown`** stores the full PDF as markdown at extraction time via [Markitdown](https://github.com/microsoft/markitdown). Added in migration `002`; dropped unused `raw_metadata` and `extraction_metadata` JSONB columns.
 
 Why markdown:
 
 - Human-readable audit copy alongside structured rows
-- Single artifact used as LLM extraction input and DB storage
+- Single artifact used as LLM extraction input, validator corpus, and DB storage
 - No binary PDF blob in Postgres
-
-Dropped `raw_metadata` and `extraction_metadata` — the former was never populated; the latter only held extraction warnings, which remain CLI-only on `ExtractionResult.warnings`.
 
 Re-running extraction for the same `source_filename` replaces the document row and its `raw_markdown`.
 
@@ -88,12 +90,32 @@ Trustworthiness:
 
 **`--no-llm` fallback** — rule parsers on all markdown sections (format-generic headers, generic metadata heuristics). Best-effort offline path; less accurate for pricing grids on new vendors. Graders should use default LLM extraction for the second PDF.
 
+## Evaluation (`src/eval/`)
+
+Automated extraction quality checks ship with the repo — not just a future stretch goal.
+
+```text
+evaluate_extraction(pdf)
+  → extract (optionally --no-llm)
+  → validate_extraction (pre/post row counts)
+  → golden spot checks (metadata, key terms, key fees)
+  → threshold checks (min row counts, max drop rates)
+  → verify_numerics_in_source (every numeric row in raw_markdown)
+```
+
+- **CLI:** `writewise-eval --pdf <path> [--no-llm] [--json] [--golden <path>] [--skip-numeric-verify]`
+- **Golden fixture:** `tests/fixtures/northwind_expected.json` — spot values (e.g. Retail 90 generic 2027, clinical PA $95) plus thresholds (`min_terms_out`, `max_terms_drop_rate`, etc.)
+- **Tests:** `tests/eval/` (unit), `tests/integration/` and `tests/eval/test_eval_sample_pdf.py` (live sample PDF)
+
+`--no-llm` is the default for CI-style runs because it avoids OpenAI cost and is deterministic enough for regression on the sample PDF.
+
 ## Tool design
 
 **Typed tools, not a generic SQL tool.**
 
 | Tool | Role |
 |------|------|
+| `list_documents` | List extracted contracts; disambiguation when multiple documents exist |
 | `list_pricing_models` / `list_networks` | Disambiguation |
 | `get_network_discount` | Discounts and dispensing fees |
 | `get_rebate_guarantee` | Rebate $ + payment timing |
@@ -103,7 +125,9 @@ Trustworthiness:
 
 Typed tools constrain query shapes, prevent bad joins across pricing models, and return structured `needs_clarification` responses when parameters are missing.
 
-**Retail 30/90 discount lookup:** Extraction may store Broad National grid columns as `network_id=broad_national` + `channel=retail_30|retail_90`, or as `network_id=retail_30|retail_90` with `channel` null. `get_network_discount` tries `channel` first, then falls back to `network_id` for the same slug. Re-extraction can change row shapes; the tool must not assume a single mapping.
+**Document scoping:** `get_network_discount`, `get_rebate_guarantee`, `search_fees`, `get_included_services`, and `get_assumptions` accept `document_id`. The CLI agent selects a contract at session start and injects `document_id` when the LLM omits it. Tools return `needs_clarification` with document options when `document_id` is missing and multiple contracts exist.
+
+**Retail 30/90 discount lookup:** Extraction may store Broad National grid columns as `network_id=broad_national` + `channel=retail_30|retail_90`, or as `network_id=retail_30|retail_90` with `channel` null. `_resolve_discount_location` maps user-facing `network` / `channel` args to DB filters; queries try `channel` first, then fall back to `network_id` for the same slug.
 
 ## Question routing
 
@@ -137,7 +161,9 @@ Prior authorization nuance: operational/admin PA is listed under included servic
 1. System prompt forbids inventing numbers; answers must cite tool results.
 2. Tools return verbatim `value_text` from the database.
 3. Ambiguous questions (e.g. "brand discount" without network/year/model) trigger clarification via `needs_clarification` tool responses — the agent must not silently pick Traditional over Applied Rebates.
-4. Pricing model ambiguity is also enforced in the agent loop: if the user has not said Traditional or Applied Rebates, unsolicited `pricing_model` args are stripped before `get_network_discount` runs, because identical values across models allow silent LLM guesses.
+4. **Agent-loop hardening** (`agent.py`):
+   - If the user has not said Traditional or Applied Rebates, unsolicited `pricing_model` args are stripped before `get_network_discount` runs.
+   - Drug type, calendar year, and Retail 30/90 channel are inferred from prior user messages and injected when the LLM omits them (rule 6a in the system prompt).
 5. `not_found` responses are passed through; the agent says data is missing rather than guessing.
 
 ## What broke / limitations
@@ -149,11 +175,119 @@ Prior authorization nuance: operational/admin PA is listed under included servic
 - **Format coupling** — fee rule parser expects same section/sub-heading names as the sample proposal; renamed sections in a "same format" doc would need parser updates
 - **Validator** — lenient on `value_text` substring checks for AWP strings; strict on numeric presence in source
 - **`--no-llm` fallback** — uses format-specific metric headers and column heuristics throughout
+- **Multi-document sessions** — agent selects one contract at startup; switching mid-session requires explicit `list_documents` / re-selection
+
+## Architecture (simple view)
+
+Think of the system like a library for one big pricing book:
+
+```text
+  YOU                         READING ROBOT              FILING CABINET           ANSWER HELPER
+  ---                         -------------              --------------           -------------
+
+  "Here's a PDF"  ───────►   Turns pages into notes  ──►  Sorts facts into      Only looks in the
+  (contract book)              and pulls out numbers       labeled drawers          drawers — never
+                             (Markitdown + LLM +            (Supabase tables)        makes up prices
+                              rule parser)                                         
+
+  "What's the fee            ───────────────────────────────────────────────────►  Finds the right
+   for prior auth?"                                                                  drawer, reads
+                                                                                     the label, talks
+                                                                                     back to you
+```
+
+**Step by step (like a story):**
+
+1. **The book** — A PBM sends a PDF pricing proposal (discounts, fees, rebates).
+2. **The reading robot** — Markitdown turns the PDF into plain text. OpenAI reads that text and fills out structured forms (rows in the database). A small rule-based helper double-checks the fee table because the robot sometimes skips that chapter.
+3. **The filing cabinet** — Supabase stores every fact in drawers: discounts, fees, included services, assumptions. Each contract gets its own folder.
+4. **The answer helper** — When you ask a question, a second OpenAI call picks the right drawer tools, looks up real numbers, and answers. It is not allowed to peek at the PDF or guess.
+
+```mermaid
+flowchart LR
+  PDF["📄 Contract PDF"]
+  Extract["🤖 Read & sort facts"]
+  DB["🗄️ Database drawers"]
+  Agent["💬 Answer helper"]
+  User["👤 You"]
+
+  PDF --> Extract --> DB
+  User --> Agent --> DB
+  Agent --> User
+```
+
+## Tradeoffs and why
+
+| Decision | Chosen | Alternative | Why we chose it | What we gave up |
+|----------|--------|-------------|-----------------|-----------------|
+| Extraction engine | LLM structured output (default) | Full rule-based parsers | Pricing grids vary by vendor; rules would hardcode Northwind/Brightline column layouts | Per-PDF API cost; occasional column mis-assignments |
+| Fee schedule | Hybrid: LLM + `parse_fee_schedule` rules | LLM only | Measured failure: LLM extracted 0 fee rows from Allowances and Ancillary Charges | Fee parser tied to same section headings as sample format |
+| PDF → text | Markitdown | Docling / pdfplumber | One dependency, fast setup, good enough for same-format proposals | Weaker table fidelity on dense multi-column grids |
+| Q&A interface | Typed Supabase tools | Generic SQL or RAG over PDF | Prevents wrong joins (e.g. Traditional vs Applied Rebates), returns `needs_clarification` | New question types need a new tool, not ad-hoc SQL |
+| Storage | Supabase Postgres | Self-hosted DB / warehouse | Free tier, migrations via CLI, no ops for assessment scope | Less control over scaling and networking |
+| Grounding | DB-only answers + validator | Agent reads PDF directly | Numbers always trace to extracted rows; validator drops hallucinated numerics | Cannot answer questions about text never extracted |
+| Agent UX | CLI + document picker | Web UI | Fast to ship; fits assessment; easy to demo | No visual contract compare or click-to-cite |
+| Eval / CI | `--no-llm` + golden JSON | LLM-in-the-loop tests every run | Deterministic, no API spend in pytest | Offline path is less accurate than production LLM path |
+| Multi-document | Session `document_id` injection | Global search across all contracts | Avoids mixing two vendors' discounts in one answer | Switching contracts mid-chat needs `list_documents` |
+
+**Theme:** optimize for **trustworthy answers on same-format PBM PDFs**, not for parsing every possible contract layout in the wild without human review.
+
+## Cost implications
+
+Rough operating costs for this assessment-scale deployment (single team, dozens of PDFs per month, not enterprise volume).
+
+| Component | When it runs | Typical cost | Notes |
+|-----------|--------------|--------------|-------|
+| **OpenAI extraction** | Once per PDF (`writewise-extract`) | ~$0.05–$0.25 per 10-page proposal on `gpt-4o` | One structured-output call over full markdown; largest input token bill |
+| **OpenAI Q&A** | Per user question (`writewise-agent`) | ~$0.01–$0.05 per question | 1–3 tool rounds common; cap of 8 rounds per question |
+| **Markitdown** | Bundled with extraction | $0 | Local conversion, no API |
+| **Supabase** | Always on | $0 on free tier | Fits assessment + small pilot; paid tiers if row/storage limits hit |
+| **Rule parsers / validator** | Every extraction | $0 | CPU-only |
+| **CI / tests** | `pytest`, `writewise-eval --no-llm` | $0 API | Avoids OpenAI in automated runs |
+
+**Cost controls built in:**
+
+- `--no-llm` and `--dry-run` for extraction without API or DB writes
+- `temperature=0` on all LLM calls (more deterministic, fewer retries)
+- Validator drops bad rows instead of re-prompting the LLM (no extract-retry loops)
+- Golden eval uses offline extraction for regression tests
+
+**If volume grows 10×:** extraction cost scales linearly with PDF count; Q&A scales with questions. Upgrade paths: cache markdown per `source_filename`, batch extractions off-peak, smaller model for Q&A tool routing only, or Docling only where Markitdown fails (adds infra, not API).
+
+## Impact and ROI
+
+**Problem today (without this system):** pharmacy benefit analysts and account managers hunt through 10+ page PDFs for one number — generic discount for Retail 90 in 2027, clinical prior auth fee, rebate payment timing. Wrong network or pricing model silently changes dollars at stake.
+
+| Metric | Manual PDF search | This system | Direction |
+|--------|-------------------|-------------|-----------|
+| Time to answer a factual pricing question | 5–20 minutes | ~30 seconds (after extraction) | Large reduction |
+| Risk of citing wrong pricing model | High (two parallel grids) | Lower — tools require dimensions or clarify | Risk reduction |
+| Onboarding second same-format vendor | Re-read PDF / new spreadsheets | Re-run extract CLI | Reusable pipeline |
+| Audit trail | Page flipping | `value_text`, `source_row_label`, `raw_markdown` | Better provenance |
+| Regression when prompts/parsers change | Manual re-check | `writewise-eval` + golden JSON | Automated guardrail |
+
+**ROI framing (illustrative, not a customer quote):**
+
+- If an analyst costs **$50/hour** and saves **10 minutes per lookup**, each grounded answer saves **~$8** before counting error avoidance.
+- One **avoided pricing error** on a mid-size book of business can exceed **months** of API + Supabase cost.
+- **Break-even** for API spend is typically a handful of lookups per extracted contract per month — extraction is amortized across all future questions on that document.
+
+**Who benefits:**
+
+- **Analysts / AMs** — fast, cited answers during client calls
+- **Implementation** — structured rows for downstream systems instead of copy-paste
+- **Engineering** — golden tests catch extraction drift before users see bad data
+
+**What ROI does not claim yet:** fully hands-off extraction on arbitrary vendor layouts, or dollar-impact modeling (rebate guarantees × volume) — those are listed under "With more time."
 
 ## With more time
 
-- Stretch eval Q&A pairs + automated runner
+- Stretch eval Q&A pairs + automated agent answer grading against golden questions
 - Docling for improved table fidelity if Markitdown layout is insufficient
 - Rebate dollar estimation tool (claims × rebate rate × AWP assumptions)
 - Human-in-the-loop review UI for extraction warnings
 - pgvector search for assumptions/caveats free-text questions
+
+---
+
+A Word-friendly summary of this document is available as **`WriteWise_Decisions.docx`** in the project root.
