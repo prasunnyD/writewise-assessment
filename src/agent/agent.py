@@ -7,24 +7,103 @@ import os
 import re
 from typing import Any
 
+import typer
 from openai import OpenAI
 
 from agent.prompts import SYSTEM_PROMPT
-from agent.tools import TOOL_DEFINITIONS, dispatch_tool
+from agent.tools import DOCUMENT_SCOPED_TOOLS, TOOL_DEFINITIONS, dispatch_tool, list_documents
 
 _PRICING_MODEL_PATTERN = re.compile(
     r"\btraditional\b|\bapplied[\s_-]*rebates?\b",
     re.IGNORECASE,
 )
+_DRUG_TYPE_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    ("new_to_market", re.compile(r"\bnew[\s_-]+to[\s_-]+market\b", re.IGNORECASE)),
+    ("generic", re.compile(r"\bgenerics?\b", re.IGNORECASE)),
+    ("brand", re.compile(r"\bbrands?\b", re.IGNORECASE)),
+    ("ldd", re.compile(r"\bldd\b", re.IGNORECASE)),
+]
+_YEAR_PATTERN = re.compile(r"\b(202[4-7])\b")
+_RETAIL_90_PATTERN = re.compile(r"\bretail[\s_-]*90\b", re.IGNORECASE)
+_RETAIL_30_PATTERN = re.compile(r"\bretail[\s_-]*30\b", re.IGNORECASE)
+
+
+def _user_messages(messages: list[dict[str, Any]]) -> list[str]:
+    return [
+        message.get("content") or ""
+        for message in messages
+        if message.get("role") == "user"
+    ]
 
 
 def _user_specified_pricing_model(messages: list[dict[str, Any]]) -> bool:
-    for message in messages:
-        if message.get("role") != "user":
-            continue
-        if _PRICING_MODEL_PATTERN.search(message.get("content") or ""):
+    for content in _user_messages(messages):
+        if _PRICING_MODEL_PATTERN.search(content):
             return True
     return False
+
+
+def _user_specified_drug_type(messages: list[dict[str, Any]]) -> str | None:
+    for content in reversed(_user_messages(messages)):
+        for drug_type, pattern in _DRUG_TYPE_PATTERNS:
+            if pattern.search(content):
+                return drug_type
+    return None
+
+
+def _user_specified_year(messages: list[dict[str, Any]]) -> int | None:
+    for content in reversed(_user_messages(messages)):
+        match = _YEAR_PATTERN.search(content)
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def _user_specified_retail_network(messages: list[dict[str, Any]]) -> str | None:
+    for content in reversed(_user_messages(messages)):
+        if _RETAIL_90_PATTERN.search(content):
+            return "retail_90"
+        if _RETAIL_30_PATTERN.search(content):
+            return "retail_30"
+    return None
+
+
+def _enrich_network_discount_args(
+    args: dict[str, Any],
+    messages: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if not _user_specified_pricing_model(messages):
+        args.pop("pricing_model", None)
+    if not args.get("drug_type"):
+        drug_type = _user_specified_drug_type(messages)
+        if drug_type:
+            args["drug_type"] = drug_type
+    if not args.get("year"):
+        year = _user_specified_year(messages)
+        if year:
+            args["year"] = year
+    if not args.get("network") and not args.get("channel"):
+        network = _user_specified_retail_network(messages)
+        if network:
+            args["network"] = network
+    return args
+
+
+def _resolve_document_choice(choice: str, documents: list[dict[str, Any]]) -> str | None:
+    choice = choice.strip()
+    if choice.isdigit():
+        index = int(choice) - 1
+        if 0 <= index < len(documents):
+            return documents[index]["id"]
+    choice_lower = choice.lower()
+    matches = [
+        document
+        for document in documents
+        if choice_lower in (document.get("source_filename") or "").lower()
+    ]
+    if len(matches) == 1:
+        return matches[0]["id"]
+    return None
 
 
 class ContractAgent:
@@ -35,6 +114,34 @@ class ContractAgent:
         self.client = OpenAI(api_key=api_key)
         self.model = os.environ.get("OPENAI_MODEL", "gpt-4o")
         self.messages: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+        self.selected_document_id: str | None = None
+
+    def prompt_for_document(self) -> None:
+        result = list_documents()
+        if result["status"] == "not_found":
+            typer.echo(result["message"])
+            raise typer.Exit(1)
+
+        documents = result["documents"]
+        typer.echo("Which contract would you like to query?")
+        for index, document in enumerate(documents, 1):
+            typer.echo(f"  {index}. {document['label']}")
+
+        while True:
+            try:
+                choice = typer.prompt("Contract")
+            except (EOFError, KeyboardInterrupt):
+                typer.echo("\nGoodbye.")
+                raise typer.Exit(0) from None
+
+            document_id = _resolve_document_choice(choice, documents)
+            if document_id:
+                self.selected_document_id = document_id
+                selected = next(doc for doc in documents if doc["id"] == document_id)
+                typer.echo(f"\nQuerying: {selected['source_filename']}\n")
+                return
+
+            typer.echo("Invalid choice. Enter a number or part of the filename.")
 
     def ask(self, question: str) -> str:
         self.messages.append({"role": "user", "content": question})
@@ -70,12 +177,21 @@ class ContractAgent:
 
             for call in message.tool_calls:
                 args = json.loads(call.function.arguments or "{}")
+                if call.function.name == "get_network_discount":
+                    args = _enrich_network_discount_args(args, self.messages)
                 if (
-                    call.function.name == "get_network_discount"
-                    and not _user_specified_pricing_model(self.messages)
+                    call.function.name in DOCUMENT_SCOPED_TOOLS
+                    and not args.get("document_id")
+                    and self.selected_document_id
                 ):
-                    args.pop("pricing_model", None)
+                    args["document_id"] = self.selected_document_id
                 result = dispatch_tool(call.function.name, args)
+                if (
+                    result.get("status") == "ok"
+                    and call.function.name in DOCUMENT_SCOPED_TOOLS
+                    and args.get("document_id")
+                ):
+                    self.selected_document_id = args["document_id"]
                 self.messages.append(
                     {
                         "role": "tool",

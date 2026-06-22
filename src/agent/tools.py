@@ -10,19 +10,53 @@ from db.client import get_supabase_client
 
 _SERVICE_MATCH_FIELDS = ("service_name", "category", "value_text", "cost_summary")
 
+DOCUMENT_SCOPED_TOOLS = frozenset(
+    {
+        "get_network_discount",
+        "get_rebate_guarantee",
+        "search_fees",
+        "get_included_services",
+        "get_assumptions",
+    }
+)
 
-def _latest_document_id() -> str:
+
+def _document_label(doc: dict[str, Any]) -> str:
+    filename = doc.get("source_filename") or "unknown"
+    vendor = doc.get("vendor_name")
+    client_name = doc.get("client_name")
+    if vendor and client_name:
+        return f"{filename} ({vendor} → {client_name})"
+    return filename
+
+
+def _fetch_all_documents() -> list[dict[str, Any]]:
     client = get_supabase_client()
-    response = (
+    return (
         client.table("documents")
-        .select("id, source_filename, extracted_at")
+        .select("id, source_filename, vendor_name, client_name, proposal_date, extracted_at")
         .order("extracted_at", desc=True)
-        .limit(1)
         .execute()
+        .data
+        or []
     )
-    if not response.data:
-        raise RuntimeError("No documents found in database. Run extraction first.")
-    return response.data[0]["id"]
+
+
+def _document_clarification_options(docs: list[dict[str, Any]]) -> list[dict[str, str]]:
+    return [{"id": doc["id"], "label": _document_label(doc)} for doc in docs]
+
+
+def _require_document_id(document_id: str | None) -> str | dict[str, Any]:
+    if document_id:
+        return document_id
+    docs = _fetch_all_documents()
+    if not docs:
+        return {"status": "not_found", "message": "No contracts found. Run extraction first."}
+    return {
+        "status": "needs_clarification",
+        "message": "Which contract document should I query?",
+        "options": _document_clarification_options(docs),
+    }
 
 
 def _serialize_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -138,6 +172,27 @@ def list_networks() -> dict[str, Any]:
     return {"status": "ok", "networks": networks}
 
 
+def list_documents() -> dict[str, Any]:
+    docs = _fetch_all_documents()
+    if not docs:
+        return {"status": "not_found", "message": "No contracts found. Run extraction first."}
+    return {
+        "status": "ok",
+        "documents": [
+            {
+                "id": doc["id"],
+                "source_filename": doc.get("source_filename"),
+                "vendor_name": doc.get("vendor_name"),
+                "client_name": doc.get("client_name"),
+                "proposal_date": doc.get("proposal_date"),
+                "extracted_at": doc.get("extracted_at"),
+                "label": _document_label(doc),
+            }
+            for doc in docs
+        ],
+    }
+
+
 # Retail 30/90 are column headers under the Broad National grid in the PDF.
 # Extraction stores them in contract_terms.channel, not network_id.
 _RETAIL_CHANNELS = frozenset({"retail_30", "retail_90"})
@@ -165,6 +220,7 @@ def _resolve_discount_location(
 
 def get_network_discount(
     *,
+    document_id: str | None = None,
     pricing_model: str | None = None,
     channel: str | None = None,
     network: str | None = None,
@@ -211,7 +267,10 @@ def get_network_discount(
         }
 
     term_category = "dispensing_fee" if metric == "dispensing_fee" else "network_discount"
-    document_id = _latest_document_id()
+    resolved_document_id = _require_document_id(document_id)
+    if isinstance(resolved_document_id, dict):
+        return resolved_document_id
+    document_id = resolved_document_id
     client = get_supabase_client()
 
     def _base_discount_query():
@@ -253,6 +312,7 @@ def get_network_discount(
 
 def get_rebate_guarantee(
     *,
+    document_id: str | None = None,
     payment_schedule: str | None = None,
     channel: str | None = None,
     year: int | None = None,
@@ -279,7 +339,10 @@ def get_rebate_guarantee(
             "options": [2025, 2026, 2027],
         }
 
-    document_id = _latest_document_id()
+    resolved_document_id = _require_document_id(document_id)
+    if isinstance(resolved_document_id, dict):
+        return resolved_document_id
+    document_id = resolved_document_id
     client = get_supabase_client()
     rows = (
         client.table("contract_terms")
@@ -298,8 +361,11 @@ def get_rebate_guarantee(
     return {"status": "ok", "results": _serialize_rows(rows)}
 
 
-def search_fees(query: str) -> dict[str, Any]:
-    document_id = _latest_document_id()
+def search_fees(query: str, document_id: str | None = None) -> dict[str, Any]:
+    resolved_document_id = _require_document_id(document_id)
+    if isinstance(resolved_document_id, dict):
+        return resolved_document_id
+    document_id = resolved_document_id
     all_rows = _fetch_allowance_fee_rows(document_id)
     rows = _filter_rows_by_query(all_rows, query)
     if not rows:
@@ -310,8 +376,12 @@ def search_fees(query: str) -> dict[str, Any]:
 def get_included_services(
     category: str | None = None,
     query: str | None = None,
+    document_id: str | None = None,
 ) -> dict[str, Any]:
-    document_id = _latest_document_id()
+    resolved_document_id = _require_document_id(document_id)
+    if isinstance(resolved_document_id, dict):
+        return resolved_document_id
+    document_id = resolved_document_id
     client = get_supabase_client()
     request = (
         client.table("included_services")
@@ -368,8 +438,11 @@ def get_included_services(
     }
 
 
-def get_assumptions(category: str | None = None) -> dict[str, Any]:
-    document_id = _latest_document_id()
+def get_assumptions(category: str | None = None, document_id: str | None = None) -> dict[str, Any]:
+    resolved_document_id = _require_document_id(document_id)
+    if isinstance(resolved_document_id, dict):
+        return resolved_document_id
+    document_id = resolved_document_id
     client = get_supabase_client()
     request = client.table("assumptions").select("*").eq("document_id", document_id)
     if category:
@@ -381,6 +454,14 @@ def get_assumptions(category: str | None = None) -> dict[str, Any]:
 
 
 TOOL_DEFINITIONS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "list_documents",
+            "description": "List extracted contract documents available for Q&A.",
+            "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
+    },
     {
         "type": "function",
         "function": {
@@ -410,6 +491,12 @@ TOOL_DEFINITIONS = [
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "document_id": {
+                        "type": "string",
+                        "description": (
+                            "UUID of the contract document. Omit if already selected at session start."
+                        ),
+                    },
                     "pricing_model": {
                         "type": "string",
                         "enum": ["traditional", "applied_rebates"],
@@ -456,6 +543,12 @@ TOOL_DEFINITIONS = [
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "document_id": {
+                        "type": "string",
+                        "description": (
+                            "UUID of the contract document. Omit if already selected at session start."
+                        ),
+                    },
                     "payment_schedule": {
                         "type": "string",
                         "enum": ["quarterly_150d", "monthly_60d"],
@@ -481,7 +574,15 @@ TOOL_DEFINITIONS = [
             ),
             "parameters": {
                 "type": "object",
-                "properties": {"query": {"type": "string"}},
+                "properties": {
+                    "document_id": {
+                        "type": "string",
+                        "description": (
+                            "UUID of the contract document. Omit if already selected at session start."
+                        ),
+                    },
+                    "query": {"type": "string"},
+                },
                 "required": ["query"],
                 "additionalProperties": False,
             },
@@ -499,6 +600,12 @@ TOOL_DEFINITIONS = [
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "document_id": {
+                        "type": "string",
+                        "description": (
+                            "UUID of the contract document. Omit if already selected at session start."
+                        ),
+                    },
                     "category": {"type": "string"},
                     "query": {"type": "string"},
                 },
@@ -513,7 +620,15 @@ TOOL_DEFINITIONS = [
             "description": "Retrieve contract assumptions and caveats.",
             "parameters": {
                 "type": "object",
-                "properties": {"category": {"type": "string"}},
+                "properties": {
+                    "document_id": {
+                        "type": "string",
+                        "description": (
+                            "UUID of the contract document. Omit if already selected at session start."
+                        ),
+                    },
+                    "category": {"type": "string"},
+                },
                 "additionalProperties": False,
             },
         },
@@ -522,6 +637,8 @@ TOOL_DEFINITIONS = [
 
 
 def dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    if name == "list_documents":
+        return list_documents()
     if name == "list_pricing_models":
         return list_pricing_models()
     if name == "list_networks":

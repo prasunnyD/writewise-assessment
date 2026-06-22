@@ -14,6 +14,7 @@ def main() -> None:
     typer.echo("WriteWise Contract Q&A Agent")
     typer.echo("Type 'exit' or Ctrl+C to quit.\n")
     agent = ContractAgent()
+    agent.prompt_for_document()
     while True:
         try:
             question = typer.prompt("You")
