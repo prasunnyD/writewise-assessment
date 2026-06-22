@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import re
 
-from models.enums import BasisType, TermCategory, ValueType
-from models.extraction import AssumptionRow, ContractTermRow, FeeScheduleRow, IncludedServiceRow
+from models.enums import FeeType, SourceSection, ValueType
+from models.extraction import AssumptionRow, IncludedServiceRow
 from extract.normalizer import parse_single_value
 
 
@@ -28,7 +28,7 @@ def parse_included_services(section_text: str) -> list[IncludedServiceRow]:
                 category=current_category,
                 service_name=bullet,
                 is_included=True,
-                cost_summary=None,
+                source_section=SourceSection.INCLUDED_SERVICES,
             )
         )
     return services
@@ -39,6 +39,11 @@ FEE_SUBCATEGORIES = {
     "Reporting and IT Support",
     "ID Cards and Member Communication",
 }
+
+_ALLOWANCE_CATEGORIES = frozenset({
+    "Implementation Allowances",
+    "Pharmacy Management Fund",
+})
 
 
 def _split_service_and_cost(line: str) -> tuple[str, str] | None:
@@ -57,9 +62,8 @@ def _split_service_and_cost(line: str) -> tuple[str, str] | None:
     return None
 
 
-def parse_fee_schedule(section_text: str) -> tuple[list[ContractTermRow], list[FeeScheduleRow]]:
-    contract_rows: list[ContractTermRow] = []
-    fee_rows: list[FeeScheduleRow] = []
+def parse_fee_schedule(section_text: str) -> list[IncludedServiceRow]:
+    rows: list[IncludedServiceRow] = []
     current_category = "General"
     current_subcategory = ""
 
@@ -84,7 +88,7 @@ def parse_fee_schedule(section_text: str) -> tuple[list[ContractTermRow], list[F
         if split:
             service_name, cost_text = split
             label = f"{current_subcategory}: {service_name}" if current_subcategory else service_name
-            _append_fee_row(contract_rows, fee_rows, label, cost_text, current_category)
+            _append_fee_row(rows, label, cost_text, current_category)
             i += 1
             continue
 
@@ -104,7 +108,7 @@ def parse_fee_schedule(section_text: str) -> tuple[list[ContractTermRow], list[F
                 label = (
                     f"{current_subcategory}: {service_name}" if current_subcategory else service_name
                 )
-                _append_fee_row(contract_rows, fee_rows, label, cost_text, current_category)
+                _append_fee_row(rows, label, cost_text, current_category)
                 i += 1
                 break
             if _line_has_cost(next_line):
@@ -116,10 +120,9 @@ def parse_fee_schedule(section_text: str) -> tuple[list[ContractTermRow], list[F
         if cost_parts:
             cost_text = " ".join(cost_parts).strip()
             label = f"{current_subcategory}: {service_name}" if current_subcategory else service_name
-            _append_fee_row(contract_rows, fee_rows, label, cost_text, current_category)
+            _append_fee_row(rows, label, cost_text, current_category)
 
-    return contract_rows, fee_rows
-
+    return rows
 
 
 def _line_has_cost(line: str) -> bool:
@@ -134,8 +137,7 @@ def _line_has_cost(line: str) -> bool:
 
 
 def _append_fee_row(
-    contract_rows: list[ContractTermRow],
-    fee_rows: list[FeeScheduleRow],
+    rows: list[IncludedServiceRow],
     service_name: str,
     cost_text: str,
     current_category: str,
@@ -149,32 +151,21 @@ def _append_fee_row(
     if "pass-through" in cost_text.lower():
         value_type = ValueType.PASS_THROUGH
 
-    term_category = TermCategory.ALLOWANCE if current_category in {
-        "Implementation Allowances",
-        "Pharmacy Management Fund",
-    } else TermCategory.ANCILLARY_FEE
+    fee_type = FeeType.ALLOWANCE if current_category in _ALLOWANCE_CATEGORIES else FeeType.ANCILLARY_FEE
 
-    fee_rows.append(
-        FeeScheduleRow(
+    rows.append(
+        IncludedServiceRow(
+            category=current_category,
             service_name=service_name,
-            cost_text=cost_text,
-            value_type=value_type,
-            value_numeric=parsed.value_numeric,
-            basis_type=parsed.basis_type,
-            unit_label=parsed.unit_label,
-            category=current_category.lower().replace(" ", "_"),
-        )
-    )
-    contract_rows.append(
-        ContractTermRow(
-            term_category=term_category,
+            is_included=value_type == ValueType.INCLUDED,
+            cost_summary=cost_text,
+            source_section=SourceSection.ALLOWANCES_FEES,
+            fee_type=fee_type,
             value_type=value_type,
             value_text=cost_text,
             value_numeric=parsed.value_numeric,
             basis_type=parsed.basis_type,
             unit_label=parsed.unit_label,
-            section_title="Allowances and Ancillary Charges",
-            source_row_label=service_name,
         )
     )
 
@@ -190,19 +181,6 @@ def _is_category_header(line: str) -> bool:
         "Other Programs and Services",
         "Additional Claim Fees",
     }
-
-
-def _looks_like_service_name(line: str, lines: list[str], index: int) -> bool:
-    if _is_category_header(line):
-        return False
-    if re.match(r"^20\d{2}\s", line):
-        return False
-    if line.startswith("$") and index > 0:
-        return False
-    if index + 1 < len(lines) and not _is_category_header(lines[index + 1]):
-        if re.search(r"\$|included|pmpm|per ", lines[index + 1], re.IGNORECASE):
-            return True
-    return bool(re.search(r"[a-zA-Z]", line)) and len(line) < 120
 
 
 def _is_bullet_line(line: str) -> bool:

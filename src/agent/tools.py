@@ -208,22 +208,33 @@ def search_fees(query: str) -> dict[str, Any]:
     document_id = _latest_document_id()
     client = get_supabase_client()
     rows = (
-        client.table("contract_terms")
+        client.table("included_services")
         .select("*")
         .eq("document_id", document_id)
-        .in_("term_category", ["ancillary_fee", "allowance"])
-        .ilike("source_row_label", f"%{query}%")
+        .eq("source_section", "allowances_fees")
+        .ilike("service_name", f"%{query}%")
         .execute()
         .data
         or []
     )
     if not rows:
         rows = (
-            client.table("contract_terms")
+            client.table("included_services")
             .select("*")
             .eq("document_id", document_id)
-            .in_("term_category", ["ancillary_fee", "allowance"])
+            .eq("source_section", "allowances_fees")
             .ilike("value_text", f"%{query}%")
+            .execute()
+            .data
+            or []
+        )
+    if not rows:
+        rows = (
+            client.table("included_services")
+            .select("*")
+            .eq("document_id", document_id)
+            .eq("source_section", "allowances_fees")
+            .ilike("cost_summary", f"%{query}%")
             .execute()
             .data
             or []
@@ -239,7 +250,12 @@ def get_included_services(
 ) -> dict[str, Any]:
     document_id = _latest_document_id()
     client = get_supabase_client()
-    request = client.table("included_services").select("*").eq("document_id", document_id)
+    request = (
+        client.table("included_services")
+        .select("*")
+        .eq("document_id", document_id)
+        .eq("source_section", "included_services")
+    )
     if category:
         request = request.ilike("category", f"%{category}%")
     rows = request.execute().data or []
@@ -253,13 +269,30 @@ def get_included_services(
             or q in (row.get("cost_summary") or "").lower()
         ]
 
-    fee_rows = search_fees(query or category or "eligibility")
-    extra_costs = fee_rows.get("results", []) if fee_rows.get("status") == "ok" else []
+    fee_request = (
+        client.table("included_services")
+        .select("*")
+        .eq("document_id", document_id)
+        .eq("source_section", "allowances_fees")
+    )
+    if category:
+        fee_request = fee_request.ilike("category", f"%{category}%")
+    fee_rows = fee_request.execute().data or []
+    if query:
+        q = query.lower()
+        fee_rows = [
+            row
+            for row in fee_rows
+            if q in row.get("service_name", "").lower()
+            or q in row.get("category", "").lower()
+            or q in (row.get("value_text") or "").lower()
+            or q in (row.get("cost_summary") or "").lower()
+        ]
 
     return {
         "status": "ok",
         "included_services": rows,
-        "related_fees": extra_costs,
+        "related_fees": fee_rows,
         "note": "Compare included_services vs related_fees for included vs extra-cost.",
     }
 
@@ -360,7 +393,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "search_fees",
-            "description": "Search ancillary fees and allowances by service name keyword.",
+            "description": "Search ancillary fees and allowances from Allowances and Ancillary Charges by keyword.",
             "parameters": {
                 "type": "object",
                 "properties": {"query": {"type": "string"}},
@@ -373,7 +406,10 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "get_included_services",
-            "description": "List included PBM services and related extra-cost fees.",
+            "description": (
+                "List included PBM services (Included Services section) and related "
+                "extra-cost fees (Allowances and Ancillary Charges)."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {

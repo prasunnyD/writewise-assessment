@@ -11,6 +11,14 @@ class TermCategory(str, Enum):
     NETWORK_DISCOUNT = "network_discount"
     DISPENSING_FEE = "dispensing_fee"
     REBATE = "rebate"
+
+
+class SourceSection(str, Enum):
+    INCLUDED_SERVICES = "included_services"
+    ALLOWANCES_FEES = "allowances_fees"
+
+
+class FeeType(str, Enum):
     ALLOWANCE = "allowance"
     ANCILLARY_FEE = "ancillary_fee"
 

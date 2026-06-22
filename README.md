@@ -80,9 +80,11 @@ Example output (LLM path):
 
 ```
 Contract terms: ~120 rows
-Included services: ~20 rows
+Included services: ~50 rows (included bullets + allowances/fees)
 Assumptions: ~24 rows
 ```
+
+Schema: `contract_terms` stores pricing-grid terms (discounts, rebates, admin fees). `included_services` stores both the (Included Services) section and Allowances and Ancillary Charges — fee rows use `source_section='allowances_fees'` and are not tied to `pricing_model_id`.
 
 Re-running against the same filename replaces prior rows for that document.
 

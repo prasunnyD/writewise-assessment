@@ -6,10 +6,11 @@ import os
 
 from dotenv import load_dotenv
 
-from models.enums import PricingModel
+from models.enums import PricingModel, SourceSection
 from models.extraction import (
     DocumentMetadata,
     ExtractionResult,
+    IncludedServiceRow,
     NetworkRef,
     PricingModelRef,
 )
@@ -25,6 +26,42 @@ from extract.text_parser import parse_assumptions, parse_fee_schedule, parse_inc
 from extract.validator import validate_extraction
 
 load_dotenv()
+
+
+def _supplement_services_from_rules(
+    markdown: str,
+    included_services: list[IncludedServiceRow],
+) -> tuple[list[IncludedServiceRow], list[str]]:
+    """Fill Allowances and Ancillary Charges via rule parser; LLM often omits this section."""
+    warnings: list[str] = []
+    try:
+        sections = split_markdown_sections(markdown)
+    except ValueError:
+        return included_services, warnings
+
+    llm_included = [
+        service
+        for service in included_services
+        if service.source_section == SourceSection.INCLUDED_SERVICES
+    ]
+    merged: list[IncludedServiceRow] = list(llm_included)
+
+    fees_section = get_section(sections, "allowances_fees")
+    if fees_section:
+        rule_fees = parse_fee_schedule(fees_section.raw_text)
+        if rule_fees:
+            merged.extend(rule_fees)
+            warnings.append(
+                f"Fee schedule: {len(rule_fees)} rows from rule parser "
+                "(Allowances and Ancillary Charges)."
+            )
+
+    if not llm_included:
+        included_section = get_section(sections, "included_services")
+        if included_section:
+            merged.extend(parse_included_services(included_section.raw_text))
+
+    return merged, warnings
 
 
 def _extract_with_rules(sections: list[MarkdownSection], markdown: str) -> ExtractionResult:
@@ -61,12 +98,11 @@ def _extract_with_rules(sections: list[MarkdownSection], markdown: str) -> Extra
 
     fees_section = get_section(sections, "allowances_fees")
     if fees_section:
-        fee_terms, _ = parse_fee_schedule(fees_section.raw_text)
-        contract_terms.extend(fee_terms)
+        included_services.extend(parse_fee_schedule(fees_section.raw_text))
 
     included_section = get_section(sections, "included_services")
     if included_section:
-        included_services = parse_included_services(included_section.raw_text)
+        included_services.extend(parse_included_services(included_section.raw_text))
 
     assumptions_section = get_section(sections, "assumptions")
     if assumptions_section:
@@ -87,13 +123,18 @@ def extract_from_pdf(pdf_path: str, use_llm: bool = True) -> ExtractionResult:
     if use_llm and os.environ.get("OPENAI_API_KEY"):
         try:
             llm_result = LLMClient().extract_from_markdown(markdown)
+            supplemented_services, supplement_warnings = _supplement_services_from_rules(
+                markdown,
+                llm_result.included_services,
+            )
             result = ExtractionResult(
                 metadata=llm_result.metadata,
                 contract_terms=llm_result.contract_terms,
-                included_services=llm_result.included_services,
+                included_services=supplemented_services,
                 assumptions=llm_result.assumptions,
                 networks=llm_result.networks,
                 pricing_models=llm_result.pricing_models,
+                warnings=supplement_warnings,
                 raw_markdown=markdown,
             )
         except Exception as exc:
@@ -178,16 +219,7 @@ def load_to_supabase(result: ExtractionResult, source_filename: str) -> dict[str
     if term_payloads:
         client.table("contract_terms").insert(term_payloads).execute()
 
-    service_payloads = [
-        {
-            "document_id": document_id,
-            "category": service.category,
-            "service_name": service.service_name,
-            "is_included": service.is_included,
-            "cost_summary": service.cost_summary,
-        }
-        for service in result.included_services
-    ]
+    service_payloads = [service.to_db_dict(document_id) for service in result.included_services]
     if service_payloads:
         client.table("included_services").insert(service_payloads).execute()
 

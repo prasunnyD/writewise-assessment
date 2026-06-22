@@ -1,9 +1,11 @@
 from models.enums import (
     BasisType,
     DrugType,
+    FeeType,
     PaymentSchedule,
     PricingModel,
     RebateChannel,
+    SourceSection,
     TermCategory,
     ValueType,
 )
@@ -29,6 +31,7 @@ __all__ = [
     "DrugType",
     "ExtractionResult",
     "FeeScheduleRow",
+    "FeeType",
     "IncludedServiceRow",
     "NetworkRef",
     "NetworkPricingBlock",
@@ -38,6 +41,7 @@ __all__ = [
     "RebateChannel",
     "RebateTableBlock",
     "SectionChunk",
+    "SourceSection",
     "TermCategory",
     "ValueType",
 ]

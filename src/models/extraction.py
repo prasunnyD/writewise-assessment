@@ -8,9 +8,11 @@ from pydantic import BaseModel, Field
 from models.enums import (
     BasisType,
     DrugType,
+    FeeType,
     PaymentSchedule,
     PricingModel,
     RebateChannel,
+    SourceSection,
     TermCategory,
     ValueType,
 )
@@ -88,6 +90,31 @@ class IncludedServiceRow(BaseModel):
     service_name: str
     is_included: bool = True
     cost_summary: str | None = None
+    source_section: SourceSection = SourceSection.INCLUDED_SERVICES
+    fee_type: FeeType | None = None
+    value_type: ValueType | None = None
+    value_text: str | None = None
+    value_numeric: float | None = None
+    basis_type: BasisType | None = None
+    unit_label: str | None = None
+    page_number: int | None = None
+
+    def to_db_dict(self, document_id: str) -> dict[str, Any]:
+        return {
+            "document_id": document_id,
+            "category": self.category,
+            "service_name": self.service_name,
+            "is_included": self.is_included,
+            "cost_summary": self.cost_summary,
+            "source_section": self.source_section.value,
+            "fee_type": self.fee_type.value if self.fee_type else None,
+            "value_type": self.value_type.value if self.value_type else None,
+            "value_text": self.value_text,
+            "value_numeric": self.value_numeric,
+            "basis_type": self.basis_type.value if self.basis_type else None,
+            "unit_label": self.unit_label,
+            "page_number": self.page_number,
+        }
 
 
 class FeeScheduleRow(BaseModel):
