@@ -14,13 +14,24 @@ app = typer.Typer(help="Extract PBM pricing contract data from PDF into Supabase
 @app.command()
 def main(
     pdf: Path = typer.Option(..., "--pdf", help="Path to pricing proposal PDF"),
-    no_llm: bool = typer.Option(False, "--no-llm", help="Skip LLM extraction for text sections"),
+    no_llm: bool = typer.Option(
+        False,
+        "--no-llm",
+        help="Offline rule-based fallback (less accurate for new vendors)",
+    ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Extract and validate without loading DB"),
 ) -> None:
     if not pdf.exists():
         raise typer.BadParameter(f"PDF not found: {pdf}")
 
     typer.echo(f"Extracting from {pdf}...")
+    if no_llm:
+        typer.echo(
+            typer.style(
+                "Warning: --no-llm uses rule-based fallback; use default LLM extraction for new vendors.",
+                fg=typer.colors.YELLOW,
+            )
+        )
     result = extract_from_pdf(str(pdf), use_llm=not no_llm)
 
     typer.echo(f"Vendor: {result.metadata.vendor_name}")

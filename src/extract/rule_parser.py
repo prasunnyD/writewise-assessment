@@ -39,21 +39,39 @@ YEAR_VALUE_GLOBAL = re.compile(
 
 
 def parse_document_metadata(full_text: str) -> dict:
-    vendor_match = re.search(r"(Northwind\w*\.?\w*)", full_text, re.IGNORECASE)
-    client_match = re.search(r"Brightline Health", full_text)
-    date_match = re.search(
-        r"(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}",
-        full_text,
-    )
+    lines = [line.strip() for line in full_text.splitlines() if line.strip()]
+    vendor_name = None
+    client_name = None
     proposal_date = None
+
+    for index, line in enumerate(lines[:20]):
+        if line.lower() == "pricing proposal" and index > 0:
+            vendor_name = lines[index - 1]
+            if index + 1 < len(lines):
+                candidate = lines[index + 1]
+                if not re.match(
+                    r"^(January|February|March|April|May|June|July|August|September|"
+                    r"October|November|December)\s+\d{1,2},\s+\d{4}$",
+                    candidate,
+                    re.IGNORECASE,
+                ):
+                    client_name = candidate
+            break
+
+    date_match = re.search(
+        r"(January|February|March|April|May|June|July|August|September|October|November|December)"
+        r"\s+\d{1,2},\s+\d{4}",
+        full_text,
+        re.IGNORECASE,
+    )
     if date_match:
         from datetime import datetime
 
         proposal_date = datetime.strptime(date_match.group(0), "%B %d, %Y").date()
 
     return {
-        "vendor_name": vendor_match.group(1) if vendor_match else None,
-        "client_name": client_match.group(0) if client_match else None,
+        "vendor_name": vendor_name,
+        "client_name": client_name,
         "proposal_date": proposal_date,
     }
 
@@ -101,24 +119,21 @@ def parse_pricing_section(
 
     network_block = _extract_block(section_text, "Network Guarantees", "Mail Order")
     if network_block:
+        network_ids = _detect_network_columns(network_block)
         rows.extend(
             _parse_multi_column_metrics(
                 network_block,
                 pricing_model,
                 page_number,
-                networks=["broad_national", "retail_90"],
-                retail_30_mirror="broad_national",
+                networks=network_ids,
+                retail_30_mirror=network_ids[0] if network_ids else None,
             )
         )
 
     subsection_specs = [
         ("Mail Order", "mail", ["mail"]),
         ("Retail Specialty", "retail_specialty", ["retail_specialty"]),
-        (
-            "Exclusive Specialty",
-            "northwind_direct_specialty",
-            ["northwind_direct_specialty"],
-        ),
+        ("Exclusive Specialty", "exclusive_specialty", ["exclusive_specialty"]),
     ]
     for header, network_id, networks in subsection_specs:
         block = _extract_network_subsection(section_text, header)
@@ -133,6 +148,24 @@ def parse_pricing_section(
             )
 
     return rows
+
+
+
+def _detect_network_columns(network_block: str) -> list[str]:
+    known_headers = [
+        ("Broad National", "broad_national"),
+        ("Retail 30", "retail_30"),
+        ("Retail 90", "retail_90"),
+    ]
+    detected = [network_id for label, network_id in known_headers if label in network_block]
+    if detected:
+        return detected
+    return ["broad_national", "retail_90"]
+
+
+def _extract_formulary_name(section_text: str) -> str | None:
+    match = re.search(r"([^\n]+exclusionary formulary)", section_text, re.IGNORECASE)
+    return match.group(1).strip() if match else None
 
 
 def _extract_block(text: str, start: str, end: str | None) -> str:
@@ -254,8 +287,9 @@ def _parse_multi_column_metrics(
 
 def parse_rebate_guarantees(section_text: str, page_number: int) -> list[ContractTermRow]:
     rows: list[ContractTermRow] = []
+    formulary_name = _extract_formulary_name(section_text)
     blocks = re.split(
-        r"Northwind Performance\s+Per Brand Drug — Rebates paid (\d+) days after the (quarter|month)",
+        r"Per Brand Drug — Rebates paid (\d+) days after the (quarter|month)",
         section_text,
         flags=re.IGNORECASE,
     )
@@ -271,11 +305,11 @@ def parse_rebate_guarantees(section_text: str, page_number: int) -> list[Contrac
         else:
             schedule = PaymentSchedule.MONTHLY_60D
             timing = f"{days} days after the month"
-        rows.extend(_parse_rebate_table(body, schedule, timing, page_number))
+        rows.extend(_parse_rebate_table(body, schedule, timing, page_number, formulary_name))
         i += 3
 
     if not rows:
-        rows.extend(_parse_rebate_table_fallback(section_text, page_number))
+        rows.extend(_parse_rebate_table_fallback(section_text, page_number, formulary_name))
     return rows
 
 
@@ -284,6 +318,7 @@ def _parse_rebate_table(
     schedule: PaymentSchedule,
     timing: str,
     page_number: int,
+    formulary_name: str | None,
 ) -> list[ContractTermRow]:
     rows: list[ContractTermRow] = []
     for line in body.splitlines():
@@ -310,7 +345,7 @@ def _parse_rebate_table(
                     calendar_year=year,
                     payment_schedule=schedule,
                     payment_timing_text=timing,
-                    formulary_name="Northwind Performance exclusionary formulary",
+                    formulary_name=formulary_name,
                     value_type=ValueType.NUMERIC,
                     value_text=f"${amount:,.2f}",
                     value_numeric=amount,
@@ -324,7 +359,9 @@ def _parse_rebate_table(
     return rows
 
 
-def _parse_rebate_table_fallback(section_text: str, page_number: int) -> list[ContractTermRow]:
+def _parse_rebate_table_fallback(
+    section_text: str, page_number: int, formulary_name: str | None
+) -> list[ContractTermRow]:
     rows: list[ContractTermRow] = []
     current_schedule = PaymentSchedule.QUARTERLY_150D
     current_timing = "150 days after the quarter"
@@ -353,7 +390,7 @@ def _parse_rebate_table_fallback(section_text: str, page_number: int) -> list[Co
                         calendar_year=year,
                         payment_schedule=current_schedule,
                         payment_timing_text=current_timing,
-                        formulary_name="Northwind Performance exclusionary formulary",
+                        formulary_name=formulary_name,
                         value_type=ValueType.NUMERIC,
                         value_text=f"${amount:,.2f}",
                         value_numeric=amount,

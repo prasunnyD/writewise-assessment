@@ -24,7 +24,7 @@ Create a [Supabase](https://supabase.com) project, then set:
 | `SUPABASE_URL` | Supabase project URL |
 | `SUPABASE_SERVICE_ROLE_KEY` | Service role key (Settings → API) |
 | `SUPABASE_DB_URL` | Postgres connection URI (Settings → Database → Connection string) |
-| `OPENAI_API_KEY` | OpenAI API key |
+| `OPENAI_API_KEY` | OpenAI API key (**required** for default extraction) |
 | `OPENAI_MODEL` | Optional, defaults to `gpt-4o` |
 
 For `SUPABASE_DB_URL`, use the **URI** connection string from the Supabase dashboard. The transaction pooler (`:6543`) or direct connection (`:5432`) both work.
@@ -72,19 +72,21 @@ poetry run python -m extract --pdf assets/Northwind_Pricing_Proposal_SAMPLE.pdf
 Options:
 
 - `--dry-run` — extract and validate without writing to Supabase
-- `--no-llm` — use rule-based parsers only (works offline for text sections)
+- `--no-llm` — offline rule-based fallback (less accurate for new vendors; default uses OpenAI + Markitdown)
 
-The pipeline is reproducible: pass any same-format vendor PDF as `--pdf`. No vendor numbers are hardcoded.
+The pipeline is reproducible: pass any same-format vendor PDF as `--pdf`. Vendor names and numbers are read from the document, not hardcoded.
 
-Example output:
+Example output (LLM path):
 
 ```
-Contract terms: ~150 rows
+Contract terms: ~120 rows
 Included services: ~20 rows
-Assumptions: ~23 rows
+Assumptions: ~24 rows
 ```
 
 Re-running against the same filename replaces prior rows for that document.
+
+The full PDF is converted to markdown via [Markitdown](https://github.com/microsoft/markitdown) and stored in `documents.raw_markdown`. The same markdown is fed to the LLM for structured extraction.
 
 ## Task 2 — Q&A Agent
 

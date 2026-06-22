@@ -81,4 +81,7 @@ def validate_extraction(result: ExtractionResult, source_corpus: str) -> Extract
         included_services=validated_services or result.included_services,
         assumptions=result.assumptions,
         warnings=all_warnings,
+        raw_markdown=result.raw_markdown,
+        networks=result.networks,
+        pricing_models=result.pricing_models,
     )

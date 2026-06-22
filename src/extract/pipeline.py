@@ -3,10 +3,19 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
-from models.extraction import DocumentMetadata, ExtractionResult, SectionChunk
-from extract.pdf_parser import parse_pdf
+from dotenv import load_dotenv
+
+from models.enums import PricingModel
+from models.extraction import (
+    DocumentMetadata,
+    ExtractionResult,
+    NetworkRef,
+    PricingModelRef,
+)
+from extract.document_converter import pdf_to_markdown
+from extract.llm_extractor import LLMClient
+from extract.markdown_sections import MarkdownSection, get_section, split_markdown_sections
 from extract.rule_parser import (
     parse_document_metadata,
     parse_pricing_section,
@@ -15,105 +24,123 @@ from extract.rule_parser import (
 from extract.text_parser import parse_assumptions, parse_fee_schedule, parse_included_services
 from extract.validator import validate_extraction
 
-
-def _get_section(sections: list[SectionChunk], section_type: str) -> SectionChunk | None:
-    return next((s for s in sections if s.section_type == section_type), None)
+load_dotenv()
 
 
-def extract_from_pdf(pdf_path: str, use_llm: bool = True) -> ExtractionResult:
-    pages, sections = parse_pdf(pdf_path)
-    full_text = "\n\n".join(page.text for page in pages)
-    meta_dict = parse_document_metadata(full_text)
+def _extract_with_rules(sections: list[MarkdownSection], markdown: str) -> ExtractionResult:
+    meta_dict = parse_document_metadata(markdown)
     metadata = DocumentMetadata(**meta_dict)
 
     contract_terms = []
     included_services = []
     assumptions = []
-    warnings: list[str] = []
 
-    traditional = _get_section(sections, "traditional_pricing")
+    traditional = get_section(sections, "traditional_pricing")
     if traditional:
-        from models.enums import PricingModel
-
         contract_terms.extend(
             parse_pricing_section(
                 traditional.raw_text,
                 PricingModel.TRADITIONAL,
-                traditional.page_start,
+                traditional.page_number,
             )
         )
 
-    rebate = _get_section(sections, "rebate_guarantees")
+    rebate = get_section(sections, "rebate_guarantees")
     if rebate:
-        contract_terms.extend(parse_rebate_guarantees(rebate.raw_text, rebate.page_start))
+        contract_terms.extend(parse_rebate_guarantees(rebate.raw_text, rebate.page_number))
 
-    applied = _get_section(sections, "applied_rebates_pricing")
+    applied = get_section(sections, "applied_rebates_pricing")
     if applied:
-        from models.enums import PricingModel
-
         contract_terms.extend(
             parse_pricing_section(
                 applied.raw_text,
                 PricingModel.APPLIED_REBATES,
-                applied.page_start,
+                applied.page_number,
             )
         )
 
-    fees_section = _get_section(sections, "allowances_fees")
+    fees_section = get_section(sections, "allowances_fees")
     if fees_section:
-        if use_llm and os.environ.get("OPENAI_API_KEY"):
-            try:
-                from extract.llm_extractor import LLMClient, fees_to_contract_terms
+        fee_terms, _ = parse_fee_schedule(fees_section.raw_text)
+        contract_terms.extend(fee_terms)
 
-                client = LLMClient()
-                fee_rows = client.extract_fee_schedule(fees_section.raw_text)
-                contract_terms.extend(
-                    fees_to_contract_terms(fee_rows, fees_section.page_start)
-                )
-            except Exception as exc:
-                warnings.append(f"LLM fee extraction failed, using rule parser: {exc}")
-                fee_terms, _ = parse_fee_schedule(fees_section.raw_text)
-                contract_terms.extend(fee_terms)
-        else:
-            fee_terms, _ = parse_fee_schedule(fees_section.raw_text)
-            contract_terms.extend(fee_terms)
-
-    included_section = _get_section(sections, "included_services")
+    included_section = get_section(sections, "included_services")
     if included_section:
-        if use_llm and os.environ.get("OPENAI_API_KEY"):
-            try:
-                from extract.llm_extractor import LLMClient
+        included_services = parse_included_services(included_section.raw_text)
 
-                client = LLMClient()
-                included_services = client.extract_included_services(included_section.raw_text)
-            except Exception as exc:
-                warnings.append(f"LLM included services failed, using rule parser: {exc}")
-                included_services = parse_included_services(included_section.raw_text)
-        else:
-            included_services = parse_included_services(included_section.raw_text)
-
-    assumptions_section = _get_section(sections, "assumptions")
+    assumptions_section = get_section(sections, "assumptions")
     if assumptions_section:
-        if use_llm and os.environ.get("OPENAI_API_KEY"):
-            try:
-                from extract.llm_extractor import LLMClient
+        assumptions = parse_assumptions(assumptions_section.raw_text)
 
-                client = LLMClient()
-                assumptions = client.extract_assumptions(assumptions_section.raw_text)
-            except Exception as exc:
-                warnings.append(f"LLM assumptions failed, using rule parser: {exc}")
-                assumptions = parse_assumptions(assumptions_section.raw_text)
-        else:
-            assumptions = parse_assumptions(assumptions_section.raw_text)
-
-    result = ExtractionResult(
+    return ExtractionResult(
         metadata=metadata,
         contract_terms=contract_terms,
         included_services=included_services,
         assumptions=assumptions,
-        warnings=warnings,
+        warnings=["Rule-based fallback extraction (--no-llm); less accurate for new vendors."],
     )
-    return validate_extraction(result, full_text)
+
+
+def extract_from_pdf(pdf_path: str, use_llm: bool = True) -> ExtractionResult:
+    markdown = pdf_to_markdown(pdf_path)
+
+    if use_llm and os.environ.get("OPENAI_API_KEY"):
+        try:
+            llm_result = LLMClient().extract_from_markdown(markdown)
+            result = ExtractionResult(
+                metadata=llm_result.metadata,
+                contract_terms=llm_result.contract_terms,
+                included_services=llm_result.included_services,
+                assumptions=llm_result.assumptions,
+                networks=llm_result.networks,
+                pricing_models=llm_result.pricing_models,
+                raw_markdown=markdown,
+            )
+        except Exception as exc:
+            sections = split_markdown_sections(markdown)
+            result = _extract_with_rules(sections, markdown)
+            result.warnings.append(f"LLM extraction failed, using rule fallback: {exc}")
+            result.raw_markdown = markdown
+    else:
+        sections = split_markdown_sections(markdown)
+        result = _extract_with_rules(sections, markdown)
+        result.raw_markdown = markdown
+
+    return validate_extraction(result, markdown)
+
+
+def _upsert_reference_data(result: ExtractionResult) -> None:
+    from db.client import get_supabase_client
+
+    client = get_supabase_client()
+
+    seen_models: dict[str, str] = {
+        model.id: model.display_name for model in result.pricing_models
+    }
+    for term in result.contract_terms:
+        if term.pricing_model_id:
+            model_id = term.pricing_model_id.value
+            seen_models.setdefault(model_id, term.section_title or model_id)
+    if seen_models:
+        client.table("pricing_models").upsert(
+            [{"id": key, "display_name": value} for key, value in seen_models.items()],
+            on_conflict="id",
+        ).execute()
+
+    seen_networks: dict[str, str] = {
+        network.id: network.display_name for network in result.networks
+    }
+    for term in result.contract_terms:
+        if term.network_id:
+            seen_networks.setdefault(
+                term.network_id,
+                term.network_id.replace("_", " ").title(),
+            )
+    if seen_networks:
+        client.table("networks").upsert(
+            [{"id": key, "display_name": value} for key, value in seen_networks.items()],
+            on_conflict="id",
+        ).execute()
 
 
 def load_to_supabase(result: ExtractionResult, source_filename: str) -> dict[str, int]:
@@ -133,6 +160,8 @@ def load_to_supabase(result: ExtractionResult, source_filename: str) -> dict[str
             client.table(table).delete().eq("document_id", doc_id).execute()
         client.table("documents").delete().eq("id", doc_id).execute()
 
+    _upsert_reference_data(result)
+
     doc_payload = {
         "source_filename": source_filename,
         "vendor_name": result.metadata.vendor_name,
@@ -140,7 +169,7 @@ def load_to_supabase(result: ExtractionResult, source_filename: str) -> dict[str
         "proposal_date": result.metadata.proposal_date.isoformat()
         if result.metadata.proposal_date
         else None,
-        "extraction_metadata": {"warnings": result.warnings},
+        "raw_markdown": result.raw_markdown,
     }
     doc_response = client.table("documents").insert(doc_payload).execute()
     document_id = doc_response.data[0]["id"]

@@ -14,24 +14,52 @@ Non-numeric values use `value_type` (`included`, `quoted_upon_request`, `pass_th
 
 Rebate payment timing is a first-class field (`payment_schedule`, `payment_timing_text`) because two otherwise identical rebate grids differ only by quarterly vs monthly payment.
 
+## Raw document storage
+
+**`documents.raw_markdown`** stores the full PDF as markdown at extraction time via [Markitdown](https://github.com/microsoft/markitdown).
+
+Why markdown:
+
+- Human-readable audit copy alongside structured rows
+- Single artifact used as LLM extraction input and DB storage
+- No binary PDF blob in Postgres
+
+Dropped `raw_metadata` and `extraction_metadata` — the former was never populated; the latter only held extraction warnings, which remain CLI-only on `ExtractionResult.warnings`.
+
+Re-running extraction for the same `source_filename` replaces the document row and its `raw_markdown`.
+
 ## Extraction pipeline
 
-**Hybrid: rule-based for structured tables, LLM optional for text-heavy sections.**
+**Markitdown + LLM-first structured extraction**, with a rule-based `--no-llm` fallback.
 
-| Section | Approach |
-|---------|----------|
-| Traditional / Applied Rebates pricing | Rule parser + deterministic year splitter |
-| Rebate guarantees | Rule parser on dollar grids |
-| Included services, fees, assumptions | LLM structured outputs when `OPENAI_API_KEY` set; rule fallback |
+```text
+PDF → Markitdown → markdown
+  → (default) OpenAI structured output → ContractTermRow / IncludedServiceRow / AssumptionRow
+  → (--no-llm) format-generic section split → rule parsers
+  → validator (source-text checks) → Supabase
+```
+
+Why Markitdown over pdfplumber or Docling:
+
+- **Markitdown** — lightweight, one-step PDF→markdown, good enough for same-format proposals; easy Poetry install for graders
+- **Not pdfplumber** — required vendor-specific section regex and brittle column mapping; markdown was generated but unused for extraction
+- **Not Docling** — better table fidelity but heavy models/RAM; overkill for this assessment scope
+
+Why LLM-first:
+
+- Removes vendor-specific hardcoding (no `Northwind` / `Brightline` regex, no fixed `section_title` mappers)
+- Reads network names, formulary names, and section headings from the document
+- Outputs `ContractTermRow` directly — no intermediate `FeeScheduleRow` → mapper glue
+- `networks` and `pricing_models` reference rows are upserted at load time from extracted data
 
 Trustworthiness:
 
-1. **Deterministic normalizer** splits stacked cells (`2025: AWP-21.50% / 2026: ...`) into one row per year — not left to the LLM alone.
-2. **Source-text validation** drops numeric rows whose values don't appear in the extracted PDF text.
-3. **Idempotent loads** — re-run deletes prior rows for the same `source_filename`.
-4. **Provenance columns** — `section_title`, `page_number`, `source_row_label` for audit.
+1. **Structured outputs** — Pydantic schema with enums constrains `term_category`, `basis_type`, `value_type`, etc.
+2. **Source-text validation** — drops numeric rows whose values don't appear in the markdown corpus
+3. **Idempotent loads** — re-run deletes prior rows for the same `source_filename`
+4. **Provenance columns** — `section_title`, `page_number`, `source_row_label` for audit
 
-pdfplumber layout differs from visual PDF order (metric names inline with years). The rule parser uses regex to extract `(year, value)` pairs and maps alternating columns to `broad_national` / `retail_90`, mirroring `retail_30` to broad national when only two distinct columns appear.
+**`--no-llm` fallback** — rule parsers on markdown sections (format-generic headers, generic metadata heuristics). Best-effort offline path; less accurate for new vendors. Graders should use default LLM extraction for the second PDF.
 
 ## Tool design
 
@@ -57,15 +85,16 @@ Typed tools constrain query shapes, prevent bad joins across pricing models, and
 
 ## What broke / limitations
 
-- **pdfplumber column order** — Network guarantee columns are merged on one line; we infer column mapping from pair order. A third distinct Retail 30 column could be mis-assigned if a vendor PDF has three unique value columns.
-- **Fee schedule line breaks** — Multi-line cells (e.g. Claims portal "4 users: Included") sometimes split into separate rows. Search still finds related fees.
-- **Section page boundaries** — Segmentation uses header regex on full text; page numbers are approximate.
-- **Validator** — Lenient on `value_text` substring checks for AWP strings; strict on numeric presence in source.
+- **LLM grid accuracy** — pricing/rebate tables may mis-assign network or year columns; validator catches missing numerics but not all structural errors
+- **Markitdown table layout** — dense multi-column grids may flatten; Docling would be the upgrade path
+- **Fee schedule line breaks** — Multi-line cells sometimes split into separate rows. Search still finds related fees.
+- **Validator** — Lenient on `value_text` substring checks for AWP strings; strict on numeric presence in source
+- **`--no-llm` fallback** — still uses format-specific metric headers and column heuristics
 
 ## With more time
 
 - Stretch eval Q&A pairs + automated runner
+- Docling for improved table fidelity if Markitdown layout is insufficient
 - Rebate dollar estimation tool (claims × rebate rate × AWP assumptions)
-- Table-aware PDF extraction (camelot/tabula) for column alignment
 - Human-in-the-loop review UI for extraction warnings
 - pgvector search for assumptions/caveats free-text questions

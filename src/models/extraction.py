@@ -31,6 +31,16 @@ class DocumentMetadata(BaseModel):
     proposal_date: date | None = None
 
 
+class NetworkRef(BaseModel):
+    id: str
+    display_name: str
+
+
+class PricingModelRef(BaseModel):
+    id: str
+    display_name: str
+
+
 class YearValue(BaseModel):
     calendar_year: int
     value_text: str
@@ -143,3 +153,6 @@ class ExtractionResult(BaseModel):
     included_services: list[IncludedServiceRow] = Field(default_factory=list)
     assumptions: list[AssumptionRow] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    raw_markdown: str = ""
+    networks: list[NetworkRef] = Field(default_factory=list)
+    pricing_models: list[PricingModelRef] = Field(default_factory=list)

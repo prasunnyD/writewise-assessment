@@ -14,7 +14,7 @@ def parse_included_services(section_text: str) -> list[IncludedServiceRow]:
     current_category = "General"
     for line in section_text.splitlines():
         line = line.strip()
-        if not line or line.startswith("Northwind PBM Services"):
+        if not line or "(Included Services)" in line:
             continue
         if not _is_bullet_line(line):
             if line.endswith("Services") or line.endswith("Tools") or line.endswith("Management"):
