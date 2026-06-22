@@ -48,9 +48,35 @@ def list_networks() -> dict[str, Any]:
     return {"status": "ok", "networks": networks}
 
 
+# Retail 30/90 are column headers under the Broad National grid in the PDF.
+# Extraction stores them in contract_terms.channel, not network_id.
+_RETAIL_CHANNELS = frozenset({"retail_30", "retail_90"})
+_STANDALONE_NETWORKS = frozenset(
+    {"mail", "retail_specialty", "exclusive_specialty", "northwind_direct_specialty"}
+)
+
+
+def _resolve_discount_location(
+    *,
+    network: str | None,
+    channel: str | None,
+) -> tuple[str | None, str | None]:
+    """Map user-facing network/channel to DB filters (network_id, channel)."""
+    if channel in _RETAIL_CHANNELS:
+        return None, channel
+    if network in _RETAIL_CHANNELS:
+        return None, network
+    if network in _STANDALONE_NETWORKS or network == "broad_national":
+        return network, channel if channel in _RETAIL_CHANNELS else None
+    if channel in _STANDALONE_NETWORKS:
+        return channel, None
+    return network, channel
+
+
 def get_network_discount(
     *,
     pricing_model: str | None = None,
+    channel: str | None = None,
     network: str | None = None,
     drug_type: str | None = None,
     year: int | None = None,
@@ -62,12 +88,25 @@ def get_network_discount(
             "message": "Which pricing model? Traditional or Applied Rebates?",
             "options": ["traditional", "applied_rebates"],
         }
-    if not network:
+
+    network_id, channel_id = _resolve_discount_location(network=network, channel=channel)
+    if not network_id and not channel_id:
         return {
             "status": "needs_clarification",
-            "message": "Which network?",
-            "options": [n["id"] for n in (list_networks().get("networks") or [])],
+            "message": (
+                "Which pharmacy network or retail channel? "
+                "Use retail_30 or retail_90 for retail discounts; "
+                "mail, retail_specialty, or exclusive_specialty for other networks."
+            ),
+            "options": ["retail_30", "retail_90", "mail", "retail_specialty", "exclusive_specialty"],
         }
+    if network_id == "broad_national" and not channel_id:
+        return {
+            "status": "needs_clarification",
+            "message": "Broad National has separate Retail 30 and Retail 90 discounts. Which channel?",
+            "options": ["retail_30", "retail_90"],
+        }
+
     if not drug_type:
         return {
             "status": "needs_clarification",
@@ -84,24 +123,32 @@ def get_network_discount(
     term_category = "dispensing_fee" if metric == "dispensing_fee" else "network_discount"
     document_id = _latest_document_id()
     client = get_supabase_client()
-    query = (
-        client.table("contract_terms")
-        .select("*")
-        .eq("document_id", document_id)
-        .eq("pricing_model_id", pricing_model)
-        .eq("network_id", network)
-        .eq("drug_type", drug_type)
-        .eq("calendar_year", year)
-        .eq("term_category", term_category)
-    )
-    rows = query.execute().data or []
+
+    def _base_query():
+        query = (
+            client.table("contract_terms")
+            .select("*")
+            .eq("document_id", document_id)
+            .eq("pricing_model_id", pricing_model)
+            .eq("drug_type", drug_type)
+            .eq("calendar_year", year)
+            .eq("term_category", term_category)
+        )
+        if channel_id:
+            query = query.eq("channel", channel_id)
+        if network_id:
+            query = query.eq("network_id", network_id)
+        return query
+
+    rows = _base_query().execute().data or []
     if not rows:
         return {
             "status": "not_found",
             "message": "No matching discount found in contract data.",
             "query": {
                 "pricing_model": pricing_model,
-                "network": network,
+                "network_id": network_id,
+                "channel": channel_id,
                 "drug_type": drug_type,
                 "year": year,
                 "metric": metric,
@@ -250,12 +297,28 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "get_network_discount",
-            "description": "Look up a network discount or dispensing fee from the database.",
+            "description": (
+                "Look up a network discount or dispensing fee. "
+                "For Retail 30 or Retail 90, pass network='retail_30' or network='retail_90' "
+                "(stored as channel under broad_national — do not ask the user for broad_national). "
+                "For Mail, Retail Specialty, or Exclusive Specialty, pass network='mail', etc."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "pricing_model": {"type": "string", "enum": ["traditional", "applied_rebates"]},
-                    "network": {"type": "string"},
+                    "network": {
+                        "type": "string",
+                        "description": (
+                            "Retail channel (retail_30, retail_90) or standalone network "
+                            "(mail, retail_specialty, exclusive_specialty)."
+                        ),
+                    },
+                    "channel": {
+                        "type": "string",
+                        "enum": ["retail_30", "retail_90"],
+                        "description": "Optional alias when the user names Retail 30/90 explicitly.",
+                    },
                     "drug_type": {
                         "type": "string",
                         "enum": ["brand", "generic", "ldd", "new_to_market"],
