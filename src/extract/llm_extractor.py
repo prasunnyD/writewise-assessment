@@ -27,9 +27,11 @@ Rules:
 - Extract contract_terms as rows ready for the database schema. One row per year/network/metric/channel combination in pricing grids.
 - Use pricing_model_id values: "traditional" or "applied_rebates" based on section headings in the document.
 - Use network_id as a lowercase slug from network column/section headers (e.g. broad_national, retail_30, retail_90, mail, retail_specialty, exclusive_specialty). Include discovered networks in the networks list with matching id and display_name.
+- For network_discount and dispensing_fee rows in the Broad National multi-column grid: use network_id="broad_national" and channel="retail_30" or channel="retail_90" for each column. One row per year, drug type, metric, and column. Do not swap Retail 30 and Retail 90 values.
+- Alternatively, standalone retail network sections may use network_id="retail_30" or network_id="retail_90" with channel null.
 - Use term_category values: admin_fee, network_discount, dispensing_fee, rebate.
 - Use drug_type when applicable: brand, generic, ldd, new_to_market.
-- Use channel for rebate rows: retail_30, retail_90, mail, specialty. Do not put channel values in network_id.
+- Use channel for rebate rows: retail_30, retail_90, mail, specialty.
 - Use payment_schedule for rebates: quarterly_150d or monthly_60d based on payment timing text in the document.
 - Copy value_text, payment_timing_text, unit_label, and formulary_name verbatim from the document when present.
 - Parse value_numeric and basis_type when amounts are numeric (awp_minus_percent, dollar_per_claim, pmpm, per_brand_drug, etc.).

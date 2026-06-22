@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import math
+import re
 from typing import Any
 
 from db.client import get_supabase_client
+
+_SERVICE_MATCH_FIELDS = ("service_name", "category", "value_text", "cost_summary")
 
 
 def _latest_document_id() -> str:
@@ -30,6 +34,92 @@ def _serialize_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         }
         for row in rows
     ]
+
+
+def _normalize_text(text: str) -> str:
+    normalized = text.lower()
+    normalized = re.sub(r"[—–\-]+", " ", normalized)
+    normalized = re.sub(r"[^\w\s%$./]", " ", normalized)
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+def _query_tokens(query: str) -> list[str]:
+    return [token for token in _normalize_text(query).split() if token]
+
+
+def _row_matches_query(row: dict[str, Any], query: str) -> bool:
+    tokens = _query_tokens(query)
+    if not tokens:
+        return True
+    haystack = " ".join(_normalize_text(str(row.get(field) or "")) for field in _SERVICE_MATCH_FIELDS)
+    return all(token in haystack for token in tokens)
+
+
+def _filter_rows_by_query(rows: list[dict[str, Any]], query: str) -> list[dict[str, Any]]:
+    if not query:
+        return rows
+    return [row for row in rows if _row_matches_query(row, query)]
+
+
+def _row_haystack(row: dict[str, Any]) -> str:
+    return " ".join(_normalize_text(str(row.get(field) or "")) for field in _SERVICE_MATCH_FIELDS)
+
+
+def _row_token_score(row: dict[str, Any], query: str) -> int:
+    tokens = _query_tokens(query)
+    if not tokens:
+        return 0
+    haystack = _row_haystack(row)
+    return sum(1 for token in tokens if token in haystack)
+
+
+def _min_suggestion_score(token_count: int) -> int:
+    if token_count <= 1:
+        return 1
+    return max(2, math.ceil(token_count * 0.4))
+
+
+def _suggest_rows_by_query(rows: list[dict[str, Any]], query: str) -> list[dict[str, Any]]:
+    tokens = _query_tokens(query)
+    if not tokens:
+        return []
+    min_score = _min_suggestion_score(len(tokens))
+    return [row for row in rows if _row_token_score(row, query) >= min_score]
+
+
+def _fee_clarification_options(rows: list[dict[str, Any]]) -> list[dict[str, str]]:
+    return [
+        {
+            "service_name": str(row.get("service_name") or ""),
+            "value_text": str(row.get("value_text") or row.get("cost_summary") or ""),
+        }
+        for row in rows
+    ]
+
+
+def _fetch_allowance_fee_rows(document_id: str) -> list[dict[str, Any]]:
+    client = get_supabase_client()
+    return (
+        client.table("included_services")
+        .select("*")
+        .eq("document_id", document_id)
+        .eq("source_section", "allowances_fees")
+        .execute()
+        .data
+        or []
+    )
+
+
+def _fee_search_response(rows: list[dict[str, Any]], query: str) -> dict[str, Any]:
+    if not rows:
+        return {"status": "not_found", "message": f"No fees matched '{query}'."}
+    if len(rows) > 1:
+        return {
+            "status": "needs_clarification",
+            "message": "Multiple fees matched. Which service do you need?",
+            "options": _fee_clarification_options(rows),
+        }
+    return {"status": "ok", "results": _serialize_rows(rows)}
 
 
 def list_pricing_models() -> dict[str, Any]:
@@ -124,8 +214,8 @@ def get_network_discount(
     document_id = _latest_document_id()
     client = get_supabase_client()
 
-    def _base_query():
-        query = (
+    def _base_discount_query():
+        return (
             client.table("contract_terms")
             .select("*")
             .eq("document_id", document_id)
@@ -134,13 +224,17 @@ def get_network_discount(
             .eq("calendar_year", year)
             .eq("term_category", term_category)
         )
+
+    rows: list[dict[str, Any]] = []
+    if channel_id and not network_id:
+        rows = _base_discount_query().eq("channel", channel_id).execute().data or []
+        if not rows:
+            rows = _base_discount_query().eq("network_id", channel_id).execute().data or []
+    elif network_id:
+        query = _base_discount_query().eq("network_id", network_id)
         if channel_id:
             query = query.eq("channel", channel_id)
-        if network_id:
-            query = query.eq("network_id", network_id)
-        return query
-
-    rows = _base_query().execute().data or []
+        rows = query.execute().data or []
     if not rows:
         return {
             "status": "not_found",
@@ -206,42 +300,11 @@ def get_rebate_guarantee(
 
 def search_fees(query: str) -> dict[str, Any]:
     document_id = _latest_document_id()
-    client = get_supabase_client()
-    rows = (
-        client.table("included_services")
-        .select("*")
-        .eq("document_id", document_id)
-        .eq("source_section", "allowances_fees")
-        .ilike("service_name", f"%{query}%")
-        .execute()
-        .data
-        or []
-    )
+    all_rows = _fetch_allowance_fee_rows(document_id)
+    rows = _filter_rows_by_query(all_rows, query)
     if not rows:
-        rows = (
-            client.table("included_services")
-            .select("*")
-            .eq("document_id", document_id)
-            .eq("source_section", "allowances_fees")
-            .ilike("value_text", f"%{query}%")
-            .execute()
-            .data
-            or []
-        )
-    if not rows:
-        rows = (
-            client.table("included_services")
-            .select("*")
-            .eq("document_id", document_id)
-            .eq("source_section", "allowances_fees")
-            .ilike("cost_summary", f"%{query}%")
-            .execute()
-            .data
-            or []
-        )
-    if not rows:
-        return {"status": "not_found", "message": f"No fees matched '{query}'."}
-    return {"status": "ok", "results": _serialize_rows(rows)}
+        rows = _suggest_rows_by_query(all_rows, query)
+    return _fee_search_response(rows, query)
 
 
 def get_included_services(
@@ -260,14 +323,7 @@ def get_included_services(
         request = request.ilike("category", f"%{category}%")
     rows = request.execute().data or []
     if query:
-        q = query.lower()
-        rows = [
-            row
-            for row in rows
-            if q in row.get("service_name", "").lower()
-            or q in row.get("category", "").lower()
-            or q in (row.get("cost_summary") or "").lower()
-        ]
+        rows = _filter_rows_by_query(rows, query)
 
     fee_request = (
         client.table("included_services")
@@ -279,20 +335,35 @@ def get_included_services(
         fee_request = fee_request.ilike("category", f"%{category}%")
     fee_rows = fee_request.execute().data or []
     if query:
-        q = query.lower()
-        fee_rows = [
-            row
-            for row in fee_rows
-            if q in row.get("service_name", "").lower()
-            or q in row.get("category", "").lower()
-            or q in (row.get("value_text") or "").lower()
-            or q in (row.get("cost_summary") or "").lower()
-        ]
+        fee_rows = _filter_rows_by_query(fee_rows, query)
+
+    if query and rows and fee_rows:
+        return {
+            "status": "needs_clarification",
+            "message": (
+                "This topic appears both as an included service and as a priced fee. "
+                "Are you asking whether it is included, or how much the fee costs?"
+            ),
+            "options": {
+                "included_services": _serialize_rows(rows),
+                "related_fees": _serialize_rows(fee_rows),
+            },
+        }
+
+    if query and not rows and not fee_rows:
+        all_fees = _fetch_allowance_fee_rows(document_id)
+        suggested_fees = _suggest_rows_by_query(all_fees, query)
+        if suggested_fees:
+            return _fee_search_response(suggested_fees, query)
+        return {
+            "status": "not_found",
+            "message": f"No included services or fees matched '{query}'.",
+        }
 
     return {
         "status": "ok",
-        "included_services": rows,
-        "related_fees": fee_rows,
+        "included_services": _serialize_rows(rows),
+        "related_fees": _serialize_rows(fee_rows),
         "note": "Compare included_services vs related_fees for included vs extra-cost.",
     }
 
@@ -331,15 +402,22 @@ TOOL_DEFINITIONS = [
         "function": {
             "name": "get_network_discount",
             "description": (
-                "Look up a network discount or dispensing fee. "
-                "For Retail 30 or Retail 90, pass network='retail_30' or network='retail_90' "
-                "(stored as channel under broad_national — do not ask the user for broad_national). "
-                "For Mail, Retail Specialty, or Exclusive Specialty, pass network='mail', etc."
+                "Look up a network discount or dispensing fee from pricing grids. "
+                "For Retail 30 or Retail 90, pass network='retail_30' or network='retail_90'. "
+                "Do not pass pricing_model until the user has chosen Traditional or Applied Rebates. "
+                "Do not use for ancillary service fees, prior authorization costs, or eligibility maintenance."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "pricing_model": {"type": "string", "enum": ["traditional", "applied_rebates"]},
+                    "pricing_model": {
+                        "type": "string",
+                        "enum": ["traditional", "applied_rebates"],
+                        "description": (
+                            "Omit unless the user explicitly stated Traditional or Applied Rebates "
+                            "in the conversation. If omitted, the tool asks which model applies."
+                        ),
+                    },
                     "network": {
                         "type": "string",
                         "description": (
@@ -371,7 +449,10 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "get_rebate_guarantee",
-            "description": "Look up rebate guarantee dollars and payment timing.",
+            "description": (
+                "Look up rebate guarantee dollars and payment timing from pricing grids. "
+                "Do not use for service fees or prior authorization costs."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -393,7 +474,11 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "search_fees",
-            "description": "Search ancillary fees and allowances from Allowances and Ancillary Charges by keyword.",
+            "description": (
+                "Search priced ancillary fees and allowances (Allowances and Ancillary Charges). "
+                "Use when the user asks how much something costs: prior authorization, eligibility "
+                "maintenance, audits, appeals, PMPM program fees. Pass 2-4 keywords from the question."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {"query": {"type": "string"}},
@@ -407,8 +492,9 @@ TOOL_DEFINITIONS = [
         "function": {
             "name": "get_included_services",
             "description": (
-                "List included PBM services (Included Services section) and related "
-                "extra-cost fees (Allowances and Ancillary Charges)."
+                "Compare included PBM services vs related extra-cost fees. "
+                "Use for 'is X included', 'included vs extra-cost', or eligibility maintenance "
+                "inclusion questions. Not the first choice for 'how much does X cost' — use search_fees."
             ),
             "parameters": {
                 "type": "object",

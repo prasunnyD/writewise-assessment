@@ -4,12 +4,27 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Any
 
 from openai import OpenAI
 
 from agent.prompts import SYSTEM_PROMPT
 from agent.tools import TOOL_DEFINITIONS, dispatch_tool
+
+_PRICING_MODEL_PATTERN = re.compile(
+    r"\btraditional\b|\bapplied[\s_-]*rebates?\b",
+    re.IGNORECASE,
+)
+
+
+def _user_specified_pricing_model(messages: list[dict[str, Any]]) -> bool:
+    for message in messages:
+        if message.get("role") != "user":
+            continue
+        if _PRICING_MODEL_PATTERN.search(message.get("content") or ""):
+            return True
+    return False
 
 
 class ContractAgent:
@@ -55,6 +70,11 @@ class ContractAgent:
 
             for call in message.tool_calls:
                 args = json.loads(call.function.arguments or "{}")
+                if (
+                    call.function.name == "get_network_discount"
+                    and not _user_specified_pricing_model(self.messages)
+                ):
+                    args.pop("pricing_model", None)
                 result = dispatch_tool(call.function.name, args)
                 self.messages.append(
                     {

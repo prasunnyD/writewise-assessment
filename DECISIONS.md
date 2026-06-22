@@ -103,12 +103,42 @@ Trustworthiness:
 
 Typed tools constrain query shapes, prevent bad joins across pricing models, and return structured `needs_clarification` responses when parameters are missing.
 
+**Retail 30/90 discount lookup:** Extraction may store Broad National grid columns as `network_id=broad_national` + `channel=retail_30|retail_90`, or as `network_id=retail_30|retail_90` with `channel` null. `get_network_discount` tries `channel` first, then falls back to `network_id` for the same slug. Re-extraction can change row shapes; the tool must not assume a single mapping.
+
+## Question routing
+
+**Hybrid approach: context-first inference, tool-driven clarification.**
+
+Do not ask upfront questions like "Is this a service?" — users speak in contract terms, not database tables. Infer the tool from question wording; clarify only when dimensions are missing or the database returns multiple valid matches.
+
+| User signal | Tool | Clarify when |
+|-------------|------|--------------|
+| "how much", "cost", "fee for" + service name | `search_fees` | Multiple fee rows match (e.g. $65 vs $95 prior auth) |
+| "discount", "dispensing fee" + network/year | `get_network_discount` | Missing pricing model, network, drug type, or year |
+| "rebate" + channel/year | `get_rebate_guarantee` | Missing payment schedule, channel, or year |
+| "included", "extra-cost", "included vs" | `get_included_services` | Topic appears in both included and priced sections |
+| "assumption", "caveat" | `get_assumptions` | Category unclear (optional) |
+
+README example questions → tools:
+
+| Question | Tool |
+|----------|------|
+| What's the generic discount for Retail 90 in 2026? | `get_network_discount` |
+| How much is a clinical prior authorization with physician review? | `search_fees` |
+| What's the specialty rebate per brand drug in 2027, and when is it paid? | `get_rebate_guarantee` |
+| What's included vs. extra-cost in eligibility maintenance? | `get_included_services` |
+
+`search_fees` uses strict token matching first, then a scored suggestion fallback on Supabase rows when no exact match is found (partial token overlap — rows are not required to match every query word). Multiple candidates return `needs_clarification` with `service_name` and `value_text` options from the database. Natural-language mismatches (e.g. "with" vs em-dash in a service name) trigger clarification, not silent `not_found`.
+
+Prior authorization nuance: operational/admin PA is listed under included services; clinical PA fees ($65 standard, $95 with physician review) are in allowances_fees. "How much" routes to `search_fees`; if the query matches multiple fee rows, the agent asks the user to choose from tool-provided options before stating a price.
+
 ## Grounding
 
 1. System prompt forbids inventing numbers; answers must cite tool results.
 2. Tools return verbatim `value_text` from the database.
 3. Ambiguous questions (e.g. "brand discount" without network/year/model) trigger clarification via `needs_clarification` tool responses — the agent must not silently pick Traditional over Applied Rebates.
-4. `not_found` responses are passed through; the agent says data is missing rather than guessing.
+4. Pricing model ambiguity is also enforced in the agent loop: if the user has not said Traditional or Applied Rebates, unsolicited `pricing_model` args are stripped before `get_network_discount` runs, because identical values across models allow silent LLM guesses.
+5. `not_found` responses are passed through; the agent says data is missing rather than guessing.
 
 ## What broke / limitations
 
