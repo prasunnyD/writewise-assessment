@@ -65,6 +65,7 @@ def _supplement_services_from_rules(
 
 
 def _extract_with_rules(sections: list[MarkdownSection], markdown: str) -> ExtractionResult:
+    """Run rule-based parsers on each markdown section."""
     meta_dict = parse_document_metadata(markdown)
     metadata = DocumentMetadata(**meta_dict)
 
@@ -118,6 +119,7 @@ def _extract_with_rules(sections: list[MarkdownSection], markdown: str) -> Extra
 
 
 def extract_from_pdf(pdf_path: str, use_llm: bool = True, *, validate: bool = True) -> ExtractionResult:
+    """Convert a PDF to markdown and extract structured contract data."""
     markdown = pdf_to_markdown(pdf_path)
 
     if use_llm and os.environ.get("OPENAI_API_KEY"):
@@ -153,6 +155,7 @@ def extract_from_pdf(pdf_path: str, use_llm: bool = True, *, validate: bool = Tr
 
 
 def _upsert_reference_data(result: ExtractionResult) -> None:
+    """Ensure pricing_models and networks reference rows exist before document insert."""
     from db.client import get_supabase_client
 
     client = get_supabase_client()
@@ -187,6 +190,7 @@ def _upsert_reference_data(result: ExtractionResult) -> None:
 
 
 def load_to_supabase(result: ExtractionResult, source_filename: str) -> dict[str, int]:
+    """Replace any existing document with the same filename and load extraction rows."""
     from db.client import get_supabase_client
 
     client = get_supabase_client()

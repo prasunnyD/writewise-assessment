@@ -1,3 +1,5 @@
+"""Public re-exports for contract extraction domain models."""
+
 from models.enums import (
     BasisType,
     DrugType,

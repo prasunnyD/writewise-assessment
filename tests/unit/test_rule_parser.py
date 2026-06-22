@@ -18,6 +18,7 @@ from tests.fixtures.snippets import (
 
 
 def test_parse_document_metadata():
+    """Extract vendor, client, and proposal date from the cover page."""
     meta = parse_document_metadata(COVER_PAGE)
     assert meta["vendor_name"] == "Northwind PBM"
     assert meta["client_name"] == "Acme Corporation"
@@ -25,6 +26,7 @@ def test_parse_document_metadata():
 
 
 def test_parse_admin_fees():
+    """Parse per-year administrative fee rows."""
     rows = parse_admin_fees(TRADITIONAL_PRICING_SECTION, PricingModel.TRADITIONAL, 1)
     assert len(rows) >= 2
     assert all(r.term_category == TermCategory.ADMIN_FEE for r in rows)
@@ -34,6 +36,7 @@ def test_parse_admin_fees():
 
 
 def test_parse_pricing_section_network_discount():
+    """Parse network discount rows from a traditional pricing section."""
     rows = parse_pricing_section(TRADITIONAL_PRICING_SECTION, PricingModel.TRADITIONAL, 1)
     discount_rows = [r for r in rows if r.term_category == TermCategory.NETWORK_DISCOUNT]
     assert discount_rows
@@ -43,6 +46,7 @@ def test_parse_pricing_section_network_discount():
 
 
 def test_parse_rebate_guarantees():
+    """Parse rebate guarantee rows with payment schedules and numeric values."""
     rows = parse_rebate_guarantees(REBATE_GUARANTEES_SECTION, 2)
     assert rows
     assert all(r.term_category == TermCategory.REBATE for r in rows)

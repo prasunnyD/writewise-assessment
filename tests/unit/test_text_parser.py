@@ -15,6 +15,7 @@ from tests.fixtures.snippets import (
 
 
 def test_parse_included_services_bullets_and_categories():
+    """Parse included service bullets and assign category headers."""
     services = parse_included_services(INCLUDED_SERVICES_SECTION)
     names = [s.service_name for s in services]
     assert "Prior authorization review" in names
@@ -24,6 +25,7 @@ def test_parse_included_services_bullets_and_categories():
 
 
 def test_parse_fee_schedule_allowance_and_ancillary():
+    """Parse allowance and ancillary fee rows with correct fee types."""
     rows = parse_fee_schedule(ALLOWANCES_FEES_SECTION)
     assert rows
     by_name = {r.service_name: r for r in rows}
@@ -42,6 +44,7 @@ def test_parse_fee_schedule_allowance_and_ancillary():
 
 
 def test_parse_assumptions():
+    """Parse assumption bullets and retain category labels."""
     assumptions = parse_assumptions(ASSUMPTIONS_SECTION)
     assert len(assumptions) >= 2
     texts = [a.bullet_text for a in assumptions]

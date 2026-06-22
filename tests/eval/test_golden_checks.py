@@ -9,6 +9,7 @@ from tests.fixtures.snippets import VALIDATOR_SOURCE
 
 
 def test_run_golden_checks_contract_term_pass():
+    """Pass when a contract term matches the golden spec."""
     result = ExtractionResult(
         metadata=DocumentMetadata(vendor_name="Northwind PBM", client_name="Acme"),
         contract_terms=[
@@ -38,6 +39,7 @@ def test_run_golden_checks_contract_term_pass():
 
 
 def test_run_golden_checks_contract_term_fail():
+    """Fail when no contract term matches the golden spec."""
     result = ExtractionResult(
         metadata=DocumentMetadata(),
         contract_terms=[make_contract_term(value_numeric=18.5)],
@@ -58,6 +60,7 @@ def test_run_golden_checks_contract_term_fail():
 
 
 def test_run_threshold_checks():
+    """Pass threshold checks when metrics meet golden minimums."""
     metrics = ValidationMetrics(
         terms_in=100,
         terms_out=95,
@@ -86,6 +89,7 @@ def test_run_threshold_checks():
 
 
 def test_load_northwind_expected():
+    """Load the Northwind golden fixture and verify basic structure."""
     from pathlib import Path
 
     path = Path(__file__).resolve().parents[1] / "fixtures" / "northwind_expected.json"

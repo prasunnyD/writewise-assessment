@@ -29,6 +29,7 @@ _RETAIL_30_PATTERN = re.compile(r"\bretail[\s_-]*30\b", re.IGNORECASE)
 
 
 def _user_messages(messages: list[dict[str, Any]]) -> list[str]:
+    """Return content strings from user-role messages in the conversation."""
     return [
         message.get("content") or ""
         for message in messages
@@ -37,6 +38,7 @@ def _user_messages(messages: list[dict[str, Any]]) -> list[str]:
 
 
 def _user_specified_pricing_model(messages: list[dict[str, Any]]) -> bool:
+    """Return True if the user mentioned Traditional or Applied Rebates pricing."""
     for content in _user_messages(messages):
         if _PRICING_MODEL_PATTERN.search(content):
             return True
@@ -44,6 +46,7 @@ def _user_specified_pricing_model(messages: list[dict[str, Any]]) -> bool:
 
 
 def _user_specified_drug_type(messages: list[dict[str, Any]]) -> str | None:
+    """Return the most recently mentioned drug type slug, if any."""
     for content in reversed(_user_messages(messages)):
         for drug_type, pattern in _DRUG_TYPE_PATTERNS:
             if pattern.search(content):
@@ -52,6 +55,7 @@ def _user_specified_drug_type(messages: list[dict[str, Any]]) -> str | None:
 
 
 def _user_specified_year(messages: list[dict[str, Any]]) -> int | None:
+    """Return the most recently mentioned contract year (2024–2027), if any."""
     for content in reversed(_user_messages(messages)):
         match = _YEAR_PATTERN.search(content)
         if match:
@@ -60,6 +64,7 @@ def _user_specified_year(messages: list[dict[str, Any]]) -> int | None:
 
 
 def _user_specified_retail_network(messages: list[dict[str, Any]]) -> str | None:
+    """Return retail_30 or retail_90 when the user names a retail channel."""
     for content in reversed(_user_messages(messages)):
         if _RETAIL_90_PATTERN.search(content):
             return "retail_90"
@@ -72,6 +77,7 @@ def _enrich_network_discount_args(
     args: dict[str, Any],
     messages: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    """Fill get_network_discount args from user messages; strip unstated pricing_model."""
     if not _user_specified_pricing_model(messages):
         args.pop("pricing_model", None)
     if not args.get("drug_type"):
@@ -90,6 +96,7 @@ def _enrich_network_discount_args(
 
 
 def _resolve_document_choice(choice: str, documents: list[dict[str, Any]]) -> str | None:
+    """Map a numeric index or filename substring to a document UUID."""
     choice = choice.strip()
     if choice.isdigit():
         index = int(choice) - 1
@@ -107,7 +114,10 @@ def _resolve_document_choice(choice: str, documents: list[dict[str, Any]]) -> st
 
 
 class ContractAgent:
+    """OpenAI tool-calling agent for contract Q&A over Supabase data."""
+
     def __init__(self) -> None:
+        """Initialize the OpenAI client and conversation state."""
         api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key:
             raise RuntimeError("OPENAI_API_KEY is required")
@@ -117,6 +127,7 @@ class ContractAgent:
         self.selected_document_id: str | None = None
 
     def prompt_for_document(self) -> None:
+        """Interactively select which extracted contract to query."""
         result = list_documents()
         if result["status"] == "not_found":
             typer.echo(result["message"])
@@ -144,6 +155,7 @@ class ContractAgent:
             typer.echo("Invalid choice. Enter a number or part of the filename.")
 
     def ask(self, question: str) -> str:
+        """Run the tool-calling loop for a user question and return the final answer."""
         self.messages.append({"role": "user", "content": question})
         for _ in range(8):
             response = self.client.chat.completions.create(

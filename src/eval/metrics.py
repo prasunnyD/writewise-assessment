@@ -11,6 +11,8 @@ CRITICAL_WARNING_FRAGMENTS = ("No contract terms survived validation",)
 
 @dataclass
 class ValidationMetrics:
+    """Row counts and warning deltas from pre/post validation."""
+
     terms_in: int
     terms_out: int
     terms_dropped: int
@@ -25,18 +27,21 @@ class ValidationMetrics:
 
     @property
     def terms_drop_rate(self) -> float:
+        """Fraction of contract terms removed by validation."""
         if self.terms_in == 0:
             return 0.0
         return self.terms_dropped / self.terms_in
 
     @property
     def services_drop_rate(self) -> float:
+        """Fraction of included services removed by validation."""
         if self.services_in == 0:
             return 0.0
         return self.services_dropped / self.services_in
 
 
 def build_validation_metrics(before: ExtractionResult, after: ExtractionResult) -> ValidationMetrics:
+    """Compare extraction results before and after validation."""
     warnings_before = len(before.warnings)
     warnings_after = len(after.warnings)
     warnings_added = after.warnings[warnings_before:]

@@ -17,10 +17,12 @@ from tests.fixtures.snippets import VALIDATOR_SOURCE
 
 @pytest.fixture
 def sample_source_corpus() -> str:
+    """Return shared source text for validator substring checks."""
     return VALIDATOR_SOURCE
 
 
 def make_contract_term(**overrides) -> ContractTermRow:
+    """Build a ContractTermRow with sensible defaults for tests."""
     defaults = {
         "pricing_model_id": PricingModel.TRADITIONAL,
         "network_id": "retail_90",
@@ -36,6 +38,7 @@ def make_contract_term(**overrides) -> ContractTermRow:
 
 
 def make_included_service(**overrides) -> IncludedServiceRow:
+    """Build an IncludedServiceRow with sensible defaults for tests."""
     defaults = {
         "category": "Clinical Services",
         "service_name": "Prior authorization review",

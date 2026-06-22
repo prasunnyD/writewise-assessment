@@ -16,6 +16,7 @@ from tests.fixtures.snippets import FULL_DOCUMENT_MARKDOWN
 
 
 def test_supplement_services_from_rules_adds_fee_rows():
+    """Supplement LLM included services with rule-parsed fee schedule rows."""
     llm_services = [
         IncludedServiceRow(
             category="Clinical",
@@ -32,12 +33,14 @@ def test_supplement_services_from_rules_adds_fee_rows():
 
 
 def test_supplement_services_from_rules_empty_llm_included():
+    """Fall back to rule-parsed included services when LLM returns none."""
     merged, _warnings = _supplement_services_from_rules(FULL_DOCUMENT_MARKDOWN, [])
     included_rows = [s for s in merged if s.source_section == SourceSection.INCLUDED_SERVICES]
     assert included_rows
 
 
 def test_extract_with_rules_produces_terms_and_services():
+    """Rule-based extraction populates terms, services, assumptions, and metadata."""
     sections = split_markdown_sections(FULL_DOCUMENT_MARKDOWN)
     result = _extract_with_rules(sections, FULL_DOCUMENT_MARKDOWN)
     assert result.contract_terms
@@ -47,6 +50,7 @@ def test_extract_with_rules_produces_terms_and_services():
 
 
 def test_extract_from_pdf_llm_path(monkeypatch):
+    """Use LLM extraction and supplement fees when API key is present."""
     llm_result = LLMExtractionResult(
         metadata=DocumentMetadata(vendor_name="Northwind PBM"),
         contract_terms=[],
@@ -74,6 +78,7 @@ def test_extract_from_pdf_llm_path(monkeypatch):
 
 
 def test_extract_from_pdf_llm_fallback_on_failure(monkeypatch):
+    """Fall back to rule-based extraction when the LLM call fails."""
     monkeypatch.setattr("extract.pipeline.pdf_to_markdown", lambda _path: FULL_DOCUMENT_MARKDOWN)
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
 
@@ -87,6 +92,7 @@ def test_extract_from_pdf_llm_fallback_on_failure(monkeypatch):
 
 
 def test_extract_from_pdf_no_llm_path(monkeypatch):
+    """Use rule-based extraction when LLM is disabled."""
     monkeypatch.setattr("extract.pipeline.pdf_to_markdown", lambda _path: FULL_DOCUMENT_MARKDOWN)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 

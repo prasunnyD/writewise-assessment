@@ -14,6 +14,7 @@ GOLDEN_PATH = Path(__file__).resolve().parents[1] / "fixtures" / "northwind_expe
 
 @pytest.mark.integration
 def test_extract_sample_pdf_no_llm():
+    """Extract the sample PDF without LLM and verify evaluation passes."""
     assert SAMPLE_PDF.exists(), f"Sample PDF not found at {SAMPLE_PDF}"
 
     report = evaluate_extraction(str(SAMPLE_PDF), use_llm=False, golden_path=GOLDEN_PATH)

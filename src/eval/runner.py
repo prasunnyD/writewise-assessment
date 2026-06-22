@@ -14,6 +14,8 @@ from eval.metrics import ValidationMetrics, build_validation_metrics
 
 @dataclass
 class EvaluationReport:
+    """Full extraction evaluation result with metrics and golden checks."""
+
     raw: ExtractionResult
     validated: ExtractionResult
     metrics: ValidationMetrics
@@ -21,6 +23,7 @@ class EvaluationReport:
 
     @property
     def passed(self) -> bool:
+        """Return True when golden checks pass and there are no critical warnings."""
         return self.golden.all_passed and not self.metrics.critical_warnings
 
 
@@ -31,6 +34,7 @@ def evaluate_extraction(
     golden_path: str | Path | None = None,
     verify_numerics: bool = True,
 ) -> EvaluationReport:
+    """Extract a PDF, validate rows, and run golden spot checks."""
     raw = extract_from_pdf(pdf_path, use_llm=use_llm, validate=False)
     validated = validate_extraction(raw, raw.raw_markdown)
     metrics = build_validation_metrics(raw, validated)
@@ -48,6 +52,7 @@ def evaluate_extraction(
 
 
 def format_report(report: EvaluationReport) -> str:
+    """Format an evaluation report as human-readable text."""
     metrics = report.metrics
     golden = report.golden
     lines = [

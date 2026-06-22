@@ -28,6 +28,7 @@ def run(
         help="Skip post-validation numeric-in-source checks",
     ),
 ) -> None:
+    """Evaluate extraction quality for a PDF and print or emit a JSON report."""
     report = evaluate_extraction(
         str(pdf),
         use_llm=not no_llm,

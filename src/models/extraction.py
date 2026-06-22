@@ -1,3 +1,5 @@
+"""Pydantic models for contract extraction input, output, and database rows."""
+
 from __future__ import annotations
 
 from datetime import date
@@ -19,6 +21,8 @@ from models.enums import (
 
 
 class SectionChunk(BaseModel):
+    """A parsed document section with optional table data."""
+
     section_type: str
     title: str
     page_start: int
@@ -28,22 +32,30 @@ class SectionChunk(BaseModel):
 
 
 class DocumentMetadata(BaseModel):
+    """Cover-page metadata for a pricing proposal."""
+
     vendor_name: str | None = None
     client_name: str | None = None
     proposal_date: date | None = None
 
 
 class NetworkRef(BaseModel):
+    """Reference row for a pharmacy network or channel."""
+
     id: str
     display_name: str
 
 
 class PricingModelRef(BaseModel):
+    """Reference row for a pricing model."""
+
     id: str
     display_name: str
 
 
 class YearValue(BaseModel):
+    """A single year-bound contract value with optional numeric parsing."""
+
     calendar_year: int
     value_text: str
     value_numeric: float | None = None
@@ -53,17 +65,23 @@ class YearValue(BaseModel):
 
 
 class MetricRow(BaseModel):
+    """A pricing metric with per-year values."""
+
     metric_name: str
     drug_type: DrugType | None = None
     values: list[YearValue]
 
 
 class NetworkPricingBlock(BaseModel):
+    """Pricing metrics grouped under one network."""
+
     network_id: str
     metrics: list[MetricRow]
 
 
 class AdminFeeRow(BaseModel):
+    """Administrative fee for a single calendar year."""
+
     calendar_year: int
     value_text: str
     value_numeric: float | None = None
@@ -72,6 +90,8 @@ class AdminFeeRow(BaseModel):
 
 
 class RebateTableBlock(BaseModel):
+    """Rebate guarantee table for one payment schedule."""
+
     payment_schedule: PaymentSchedule
     payment_timing_text: str
     formulary_name: str | None = None
@@ -79,6 +99,8 @@ class RebateTableBlock(BaseModel):
 
 
 class RebateRow(BaseModel):
+    """Rebate dollar amount for one channel and year."""
+
     calendar_year: int
     channel: RebateChannel
     value_text: str
@@ -86,6 +108,8 @@ class RebateRow(BaseModel):
 
 
 class IncludedServiceRow(BaseModel):
+    """An included service or ancillary fee row."""
+
     category: str
     service_name: str
     is_included: bool = True
@@ -100,6 +124,7 @@ class IncludedServiceRow(BaseModel):
     page_number: int | None = None
 
     def to_db_dict(self, document_id: str) -> dict[str, Any]:
+        """Serialize the row for insertion into included_services."""
         return {
             "document_id": document_id,
             "category": self.category,
@@ -118,6 +143,8 @@ class IncludedServiceRow(BaseModel):
 
 
 class FeeScheduleRow(BaseModel):
+    """Intermediate fee row before mapping to IncludedServiceRow."""
+
     service_name: str
     cost_text: str
     value_type: ValueType = ValueType.NUMERIC
@@ -128,11 +155,15 @@ class FeeScheduleRow(BaseModel):
 
 
 class AssumptionRow(BaseModel):
+    """A single assumption or caveat bullet."""
+
     category: str
     bullet_text: str
 
 
 class ContractTermRow(BaseModel):
+    """A database-ready contract term from pricing or rebate grids."""
+
     pricing_model_id: PricingModel | None = None
     network_id: str | None = None
     term_category: TermCategory
@@ -152,6 +183,7 @@ class ContractTermRow(BaseModel):
     source_row_label: str | None = None
 
     def to_db_dict(self, document_id: str) -> dict[str, Any]:
+        """Serialize the row for insertion into contract_terms."""
         return {
             "document_id": document_id,
             "pricing_model_id": self.pricing_model_id.value if self.pricing_model_id else None,
@@ -175,6 +207,8 @@ class ContractTermRow(BaseModel):
 
 
 class ExtractionResult(BaseModel):
+    """Complete structured output from a contract extraction run."""
+
     metadata: DocumentMetadata
     contract_terms: list[ContractTermRow] = Field(default_factory=list)
     included_services: list[IncludedServiceRow] = Field(default_factory=list)

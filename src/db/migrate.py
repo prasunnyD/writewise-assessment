@@ -14,6 +14,7 @@ MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "supabase" / "migrations"
 
 
 def get_database_url() -> str:
+    """Return the Postgres connection URI from environment variables."""
     url = os.environ.get("SUPABASE_DB_URL") or os.environ.get("DATABASE_URL")
     if not url:
         raise RuntimeError(
@@ -24,12 +25,14 @@ def get_database_url() -> str:
 
 
 def _split_sql_statements(sql: str) -> list[str]:
+    """Split a SQL file into executable statements, ignoring comment lines."""
     lines = [line for line in sql.splitlines() if not line.strip().startswith("--")]
     cleaned = "\n".join(lines)
     return [statement.strip() for statement in cleaned.split(";") if statement.strip()]
 
 
 def apply_migration_file(conn: psycopg.Connection, path: Path) -> int:
+    """Execute all statements in a migration file and return the statement count."""
     statements = _split_sql_statements(path.read_text(encoding="utf-8"))
     with conn.cursor() as cur:
         for statement in statements:
@@ -42,6 +45,7 @@ def run_migrations(
     *,
     database_url: str | None = None,
 ) -> list[tuple[str, int]]:
+    """Apply all .sql migration files in sorted order and return applied filenames."""
     directory = migration_dir or MIGRATIONS_DIR
     if not directory.is_dir():
         raise FileNotFoundError(f"Migrations directory not found: {directory}")

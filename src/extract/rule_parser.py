@@ -39,6 +39,7 @@ YEAR_VALUE_GLOBAL = re.compile(
 
 
 def parse_document_metadata(full_text: str) -> dict:
+    """Extract vendor, client, and proposal date from the document cover page."""
     lines = [line.strip() for line in full_text.splitlines() if line.strip()]
     vendor_name = None
     client_name = None
@@ -79,6 +80,7 @@ def parse_document_metadata(full_text: str) -> dict:
 def parse_admin_fees(
     section_text: str, pricing_model: PricingModel, page_number: int
 ) -> list[ContractTermRow]:
+    """Parse per-year administrative fee rows from a pricing section."""
     rows: list[ContractTermRow] = []
     admin_block = _extract_block(section_text, "Administrative Fee", "Network Guarantees")
     if not admin_block:
@@ -114,6 +116,7 @@ def parse_pricing_section(
     pricing_model: PricingModel,
     page_number: int,
 ) -> list[ContractTermRow]:
+    """Parse admin fees and network discount grids from a pricing section."""
     rows: list[ContractTermRow] = []
     rows.extend(parse_admin_fees(section_text, pricing_model, page_number))
 
@@ -152,6 +155,7 @@ def parse_pricing_section(
 
 
 def _detect_network_columns(network_block: str) -> list[str]:
+    """Detect network column slugs present in a multi-column pricing block."""
     known_headers = [
         ("Broad National", "broad_national"),
         ("Retail 30", "retail_30"),
@@ -164,11 +168,13 @@ def _detect_network_columns(network_block: str) -> list[str]:
 
 
 def _extract_formulary_name(section_text: str) -> str | None:
+    """Extract the formulary name from a rebate guarantees section."""
     match = re.search(r"([^\n]+exclusionary formulary)", section_text, re.IGNORECASE)
     return match.group(1).strip() if match else None
 
 
 def _extract_block(text: str, start: str, end: str | None) -> str:
+    """Return the text between a start marker and an optional end marker."""
     start_idx = text.find(start)
     if start_idx == -1:
         return ""
@@ -182,6 +188,7 @@ def _extract_block(text: str, start: str, end: str | None) -> str:
 
 
 def _extract_network_subsection(text: str, network_header: str) -> str:
+    """Return the text block for a named network subsection."""
     start = text.find(network_header)
     if start == -1:
         return ""
@@ -200,6 +207,7 @@ def _extract_network_subsection(text: str, network_header: str) -> str:
 
 
 def _split_by_metrics(text: str) -> list[tuple[str, str]]:
+    """Split pricing text into (metric_name, metric_body) pairs."""
     pattern = "|".join(re.escape(metric) for metric in METRIC_HEADERS)
     parts = re.split(f"({pattern})", text)
     blocks: list[tuple[str, str]] = []
@@ -226,6 +234,7 @@ def _parse_multi_column_metrics(
     networks: list[str],
     retail_30_mirror: str | None = None,
 ) -> list[ContractTermRow]:
+    """Parse year/value pairs for each metric across one or more network columns."""
     rows: list[ContractTermRow] = []
     for metric_name, metric_text in _split_by_metrics(text):
         pairs = YEAR_VALUE_GLOBAL.findall(metric_text)
@@ -286,6 +295,7 @@ def _parse_multi_column_metrics(
 
 
 def parse_rebate_guarantees(section_text: str, page_number: int) -> list[ContractTermRow]:
+    """Parse rebate guarantee tables from a rebate section."""
     rows: list[ContractTermRow] = []
     formulary_name = _extract_formulary_name(section_text)
     blocks = re.split(
@@ -320,6 +330,7 @@ def _parse_rebate_table(
     page_number: int,
     formulary_name: str | None,
 ) -> list[ContractTermRow]:
+    """Parse rebate dollar amounts per channel from a table body."""
     rows: list[ContractTermRow] = []
     for line in body.splitlines():
         line = line.strip()
@@ -362,6 +373,7 @@ def _parse_rebate_table(
 def _parse_rebate_table_fallback(
     section_text: str, page_number: int, formulary_name: str | None
 ) -> list[ContractTermRow]:
+    """Parse rebate rows when payment-schedule headers are not cleanly split."""
     rows: list[ContractTermRow] = []
     current_schedule = PaymentSchedule.QUARTERLY_150D
     current_timing = "150 days after the quarter"

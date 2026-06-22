@@ -36,6 +36,8 @@ SECTION_SPECS: list[tuple[str, str, re.Pattern[str]]] = [
 
 @dataclass
 class MarkdownSection:
+    """A named slice of contract markdown with optional page metadata."""
+
     section_type: str
     title: str
     raw_text: str
@@ -43,6 +45,7 @@ class MarkdownSection:
 
 
 def _find_section_starts(markdown: str) -> list[tuple[int, str, str]]:
+    """Locate all known section headers and return (offset, type, title) tuples."""
     matches: list[tuple[int, str, str]] = []
     for section_type, title, pattern in SECTION_SPECS:
         match = pattern.search(markdown)
@@ -53,6 +56,7 @@ def _find_section_starts(markdown: str) -> list[tuple[int, str, str]]:
 
 
 def split_markdown_sections(markdown: str) -> list[MarkdownSection]:
+    """Split contract markdown into ordered sections by known headings."""
     starts = _find_section_starts(markdown)
     if not starts:
         raise ValueError("No recognizable sections found in document markdown")
@@ -77,6 +81,7 @@ def split_markdown_sections(markdown: str) -> list[MarkdownSection]:
 
 
 def _build_rebate_section(markdown: str) -> MarkdownSection | None:
+    """Build a rebate_guarantees section between its start and Applied Rebates."""
     marker = "Rebate Guarantees"
     start = markdown.find(marker)
     if start == -1:
@@ -95,4 +100,5 @@ def _build_rebate_section(markdown: str) -> MarkdownSection | None:
 
 
 def get_section(sections: list[MarkdownSection], section_type: str) -> MarkdownSection | None:
+    """Return the first section matching section_type, or None."""
     return next((section for section in sections if section.section_type == section_type), None)

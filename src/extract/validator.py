@@ -9,10 +9,12 @@ from models.extraction import ContractTermRow, ExtractionResult, IncludedService
 
 
 def _normalize_for_search(text: str) -> str:
+    """Collapse whitespace and lowercase text for substring matching."""
     return re.sub(r"\s+", " ", text.lower().strip())
 
 
 def value_appears_in_source(value_text: str, source_text: str) -> bool:
+    """Return True when value_text (or its numeric parts) appears in source_text."""
     if not value_text:
         return False
     normalized_source = _normalize_for_search(source_text)
@@ -29,6 +31,7 @@ def value_appears_in_source(value_text: str, source_text: str) -> bool:
 
 
 def validate_contract_term(row: ContractTermRow, source_text: str) -> list[str]:
+    """Return warnings for a contract term whose values cannot be verified in source."""
     warnings: list[str] = []
     if row.value_type.value == "numeric" and row.value_numeric is not None:
         num_str = f"{row.value_numeric:g}"
@@ -54,6 +57,7 @@ def validate_contract_term(row: ContractTermRow, source_text: str) -> list[str]:
 
 
 def validate_included_service(row: IncludedServiceRow, source_text: str) -> list[str]:
+    """Return warnings for an included service or fee row not found in source."""
     warnings: list[str] = []
 
     if row.source_section == SourceSection.ALLOWANCES_FEES:
@@ -82,6 +86,7 @@ def validate_included_service(row: IncludedServiceRow, source_text: str) -> list
 
 
 def validate_extraction(result: ExtractionResult, source_corpus: str) -> ExtractionResult:
+    """Filter hallucinated rows and attach validation warnings to an extraction result."""
     all_warnings = list(result.warnings)
     validated_terms: list[ContractTermRow] = []
 

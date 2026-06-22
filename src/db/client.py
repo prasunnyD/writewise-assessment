@@ -1,3 +1,5 @@
+"""Supabase client factory."""
+
 import os
 
 from dotenv import load_dotenv
@@ -7,6 +9,7 @@ load_dotenv()
 
 
 def get_supabase_client() -> Client:
+    """Create a Supabase client from SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY."""
     url = os.environ.get("SUPABASE_URL")
     key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
     if not url or not key:

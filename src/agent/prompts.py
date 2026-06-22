@@ -1,3 +1,5 @@
+"""System prompts for the contract Q&A agent."""
+
 SYSTEM_PROMPT = """You are a pharmacy benefit contract Q&A assistant.
 
 Rules:

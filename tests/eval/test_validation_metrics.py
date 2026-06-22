@@ -7,6 +7,7 @@ from tests.conftest import make_contract_term, make_included_service
 
 
 def test_build_validation_metrics_counts_drops():
+    """Count dropped rows, added warnings, and critical warnings."""
     before = ExtractionResult(
         metadata=DocumentMetadata(),
         contract_terms=[make_contract_term(), make_contract_term(value_numeric=99.9)],
@@ -37,6 +38,7 @@ def test_build_validation_metrics_counts_drops():
 
 
 def test_build_validation_metrics_zero_drop_rate():
+    """Report zero drop rates when validation does not remove rows."""
     row = make_contract_term()
     result = ExtractionResult(metadata=DocumentMetadata(), contract_terms=[row])
     metrics = build_validation_metrics(result, result)

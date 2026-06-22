@@ -22,6 +22,7 @@ DOCUMENT_SCOPED_TOOLS = frozenset(
 
 
 def _document_label(doc: dict[str, Any]) -> str:
+    """Build a human-readable label for a document row."""
     filename = doc.get("source_filename") or "unknown"
     vendor = doc.get("vendor_name")
     client_name = doc.get("client_name")
@@ -31,6 +32,7 @@ def _document_label(doc: dict[str, Any]) -> str:
 
 
 def _fetch_all_documents() -> list[dict[str, Any]]:
+    """Load all extracted documents ordered by most recent extraction."""
     client = get_supabase_client()
     return (
         client.table("documents")
@@ -43,10 +45,12 @@ def _fetch_all_documents() -> list[dict[str, Any]]:
 
 
 def _document_clarification_options(docs: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Format document rows as id/label pairs for clarification prompts."""
     return [{"id": doc["id"], "label": _document_label(doc)} for doc in docs]
 
 
 def _require_document_id(document_id: str | None) -> str | dict[str, Any]:
+    """Return a document UUID or a needs_clarification / not_found response."""
     if document_id:
         return document_id
     docs = _fetch_all_documents()
@@ -60,6 +64,7 @@ def _require_document_id(document_id: str | None) -> str | dict[str, Any]:
 
 
 def _serialize_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Strip timestamps and normalize enum values for JSON tool responses."""
     return [
         {
             key: (value.value if hasattr(value, "value") else value)
@@ -71,6 +76,7 @@ def _serialize_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _normalize_text(text: str) -> str:
+    """Lowercase and collapse punctuation/whitespace for fuzzy matching."""
     normalized = text.lower()
     normalized = re.sub(r"[—–\-]+", " ", normalized)
     normalized = re.sub(r"[^\w\s%$./]", " ", normalized)
@@ -78,10 +84,12 @@ def _normalize_text(text: str) -> str:
 
 
 def _query_tokens(query: str) -> list[str]:
+    """Tokenize a search query after normalization."""
     return [token for token in _normalize_text(query).split() if token]
 
 
 def _row_matches_query(row: dict[str, Any], query: str) -> bool:
+    """Return True when every query token appears in the row's searchable fields."""
     tokens = _query_tokens(query)
     if not tokens:
         return True
@@ -90,16 +98,19 @@ def _row_matches_query(row: dict[str, Any], query: str) -> bool:
 
 
 def _filter_rows_by_query(rows: list[dict[str, Any]], query: str) -> list[dict[str, Any]]:
+    """Keep rows that match all tokens in the query."""
     if not query:
         return rows
     return [row for row in rows if _row_matches_query(row, query)]
 
 
 def _row_haystack(row: dict[str, Any]) -> str:
+    """Concatenate normalized searchable field values for a service row."""
     return " ".join(_normalize_text(str(row.get(field) or "")) for field in _SERVICE_MATCH_FIELDS)
 
 
 def _row_token_score(row: dict[str, Any], query: str) -> int:
+    """Count how many query tokens appear in the row haystack."""
     tokens = _query_tokens(query)
     if not tokens:
         return 0
@@ -108,12 +119,14 @@ def _row_token_score(row: dict[str, Any], query: str) -> int:
 
 
 def _min_suggestion_score(token_count: int) -> int:
+    """Minimum token overlap required to suggest a partial fee match."""
     if token_count <= 1:
         return 1
     return max(2, math.ceil(token_count * 0.4))
 
 
 def _suggest_rows_by_query(rows: list[dict[str, Any]], query: str) -> list[dict[str, Any]]:
+    """Return rows with enough token overlap to suggest as fee matches."""
     tokens = _query_tokens(query)
     if not tokens:
         return []
@@ -122,6 +135,7 @@ def _suggest_rows_by_query(rows: list[dict[str, Any]], query: str) -> list[dict[
 
 
 def _fee_clarification_options(rows: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Format fee rows as service_name/value_text pairs for user clarification."""
     return [
         {
             "service_name": str(row.get("service_name") or ""),
@@ -132,6 +146,7 @@ def _fee_clarification_options(rows: list[dict[str, Any]]) -> list[dict[str, str
 
 
 def _fetch_allowance_fee_rows(document_id: str) -> list[dict[str, Any]]:
+    """Load all allowance and ancillary fee rows for a document."""
     client = get_supabase_client()
     return (
         client.table("included_services")
@@ -145,6 +160,7 @@ def _fetch_allowance_fee_rows(document_id: str) -> list[dict[str, Any]]:
 
 
 def _fee_search_response(rows: list[dict[str, Any]], query: str) -> dict[str, Any]:
+    """Build ok, not_found, or needs_clarification response for a fee search."""
     if not rows:
         return {"status": "not_found", "message": f"No fees matched '{query}'."}
     if len(rows) > 1:
@@ -157,6 +173,7 @@ def _fee_search_response(rows: list[dict[str, Any]], query: str) -> dict[str, An
 
 
 def list_pricing_models() -> dict[str, Any]:
+    """List available pricing models (Traditional vs Applied Rebates)."""
     client = get_supabase_client()
     models = client.table("pricing_models").select("*").execute().data or []
     return {
@@ -167,12 +184,14 @@ def list_pricing_models() -> dict[str, Any]:
 
 
 def list_networks() -> dict[str, Any]:
+    """List pharmacy networks and channels defined in the contract data."""
     client = get_supabase_client()
     networks = client.table("networks").select("*").execute().data or []
     return {"status": "ok", "networks": networks}
 
 
 def list_documents() -> dict[str, Any]:
+    """List extracted contract documents available for Q&A."""
     docs = _fetch_all_documents()
     if not docs:
         return {"status": "not_found", "message": "No contracts found. Run extraction first."}
@@ -228,6 +247,7 @@ def get_network_discount(
     year: int | None = None,
     metric: str = "discount",
 ) -> dict[str, Any]:
+    """Look up a network discount or dispensing fee from pricing grids."""
     if not pricing_model:
         return {
             "status": "needs_clarification",
@@ -274,6 +294,7 @@ def get_network_discount(
     client = get_supabase_client()
 
     def _base_discount_query():
+        """Build a Supabase query for discount rows with shared filters."""
         return (
             client.table("contract_terms")
             .select("*")
@@ -317,6 +338,7 @@ def get_rebate_guarantee(
     channel: str | None = None,
     year: int | None = None,
 ) -> dict[str, Any]:
+    """Look up rebate guarantee dollars and payment timing from pricing grids."""
     if not payment_schedule:
         return {
             "status": "needs_clarification",
@@ -362,6 +384,7 @@ def get_rebate_guarantee(
 
 
 def search_fees(query: str, document_id: str | None = None) -> dict[str, Any]:
+    """Search priced ancillary fees and allowances by keyword."""
     resolved_document_id = _require_document_id(document_id)
     if isinstance(resolved_document_id, dict):
         return resolved_document_id
@@ -378,6 +401,7 @@ def get_included_services(
     query: str | None = None,
     document_id: str | None = None,
 ) -> dict[str, Any]:
+    """Compare included PBM services against related extra-cost fees."""
     resolved_document_id = _require_document_id(document_id)
     if isinstance(resolved_document_id, dict):
         return resolved_document_id
@@ -439,6 +463,7 @@ def get_included_services(
 
 
 def get_assumptions(category: str | None = None, document_id: str | None = None) -> dict[str, Any]:
+    """Retrieve contract assumptions and caveats, optionally filtered by category."""
     resolved_document_id = _require_document_id(document_id)
     if isinstance(resolved_document_id, dict):
         return resolved_document_id
@@ -637,6 +662,7 @@ TOOL_DEFINITIONS = [
 
 
 def dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Route an OpenAI tool call name and arguments to the matching handler."""
     if name == "list_documents":
         return list_documents()
     if name == "list_pricing_models":

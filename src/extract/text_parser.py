@@ -10,6 +10,7 @@ from extract.normalizer import parse_single_value
 
 
 def parse_included_services(section_text: str) -> list[IncludedServiceRow]:
+    """Parse bullet-list included services from a section of markdown."""
     services: list[IncludedServiceRow] = []
     current_category = "General"
     for line in section_text.splitlines():
@@ -47,6 +48,7 @@ _ALLOWANCE_CATEGORIES = frozenset({
 
 
 def _split_service_and_cost(line: str) -> tuple[str, str] | None:
+    """Split a fee line into service name and cost text when both appear on one line."""
     lowered = line.lower()
     if lowered.endswith(" included"):
         return line[: lowered.rfind(" included")].strip(), "Included"
@@ -63,6 +65,7 @@ def _split_service_and_cost(line: str) -> tuple[str, str] | None:
 
 
 def parse_fee_schedule(section_text: str) -> list[IncludedServiceRow]:
+    """Parse Allowances and Ancillary Charges fee rows from section markdown."""
     rows: list[IncludedServiceRow] = []
     current_category = "General"
     current_subcategory = ""
@@ -126,6 +129,7 @@ def parse_fee_schedule(section_text: str) -> list[IncludedServiceRow]:
 
 
 def _line_has_cost(line: str) -> bool:
+    """Return True when a line contains a recognizable cost or inclusion phrase."""
     lowered = line.lower()
     return (
         "$" in line
@@ -142,6 +146,7 @@ def _append_fee_row(
     cost_text: str,
     current_category: str,
 ) -> None:
+    """Parse cost text and append an IncludedServiceRow fee entry."""
     parsed = parse_single_value(cost_text, None)
     value_type = parsed.value_type
     if "included" in cost_text.lower() and parsed.value_numeric is None:
@@ -171,6 +176,7 @@ def _append_fee_row(
 
 
 def _is_category_header(line: str) -> bool:
+    """Return True when a line is a known fee schedule category header."""
     return line in {
         "Implementation Allowances",
         "Pharmacy Management Fund",
@@ -184,6 +190,7 @@ def _is_category_header(line: str) -> bool:
 
 
 def _is_bullet_line(line: str) -> bool:
+    """Return True when a line starts with a bullet marker."""
     stripped = line.strip()
     return (
         stripped.startswith("•")
@@ -194,6 +201,7 @@ def _is_bullet_line(line: str) -> bool:
 
 
 def _strip_bullet(line: str) -> str:
+    """Remove a leading bullet prefix from a line."""
     stripped = line.strip()
     for prefix in ("(cid:127)", "•", "-", "\u2022"):
         if stripped.startswith(prefix):
@@ -202,6 +210,7 @@ def _strip_bullet(line: str) -> str:
 
 
 def parse_assumptions(section_text: str) -> list[AssumptionRow]:
+    """Parse assumption and caveat bullets from section markdown."""
     assumptions: list[AssumptionRow] = []
     current_category = "General Assumptions"
     for line in section_text.splitlines():

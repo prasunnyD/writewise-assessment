@@ -11,6 +11,7 @@ app = typer.Typer(help="Ask questions about extracted contract data")
 
 @app.command()
 def main() -> None:
+    """Start an interactive contract Q&A session."""
     typer.echo("WriteWise Contract Q&A Agent")
     typer.echo("Type 'exit' or Ctrl+C to quit.\n")
     agent = ContractAgent()

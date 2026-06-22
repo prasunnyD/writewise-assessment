@@ -13,12 +13,16 @@ from eval.metrics import ValidationMetrics
 
 @dataclass
 class GoldenCheckFailure:
+    """A single failed golden spot check or threshold."""
+
     spec: str
     reason: str
 
 
 @dataclass
 class GoldenCheckResult:
+    """Aggregated pass/fail counts from golden evaluation checks."""
+
     spot_checks_passed: int = 0
     spot_checks_failed: int = 0
     threshold_checks_passed: int = 0
@@ -27,14 +31,17 @@ class GoldenCheckResult:
 
     @property
     def all_passed(self) -> bool:
+        """Return True when no golden check failures were recorded."""
         return not self.failures
 
     @property
     def total_passed(self) -> int:
+        """Return the total number of passed spot and threshold checks."""
         return self.spot_checks_passed + self.threshold_checks_passed
 
     @property
     def total_checks(self) -> int:
+        """Return the total number of golden checks run."""
         return (
             self.spot_checks_passed
             + self.spot_checks_failed
@@ -44,11 +51,13 @@ class GoldenCheckResult:
 
 
 def load_golden(path: str | Path) -> dict[str, Any]:
+    """Load a golden spot-check specification from a JSON file."""
     with open(path, encoding="utf-8") as handle:
         return json.load(handle)
 
 
 def _matches_term_spec(term, spec: dict[str, Any]) -> bool:
+    """Return True when a contract term matches all fields in a golden spec."""
     if "pricing_model_id" in spec:
         if not term.pricing_model_id or term.pricing_model_id.value != spec["pricing_model_id"]:
             return False
@@ -69,6 +78,7 @@ def _matches_term_spec(term, spec: dict[str, Any]) -> bool:
 
 
 def _matches_service_spec(service, spec: dict[str, Any]) -> bool:
+    """Return True when an included service matches all fields in a golden spec."""
     if "source_section" in spec:
         if service.source_section.value != spec["source_section"]:
             return False
@@ -80,6 +90,7 @@ def _matches_service_spec(service, spec: dict[str, Any]) -> bool:
 
 
 def _check_term_fields(term, spec: dict[str, Any]) -> str | None:
+    """Return an error message when term field values do not match the spec."""
     if "value_numeric" in spec:
         expected = spec["value_numeric"]
         if term.value_numeric is None or term.value_numeric != expected:
@@ -88,6 +99,7 @@ def _check_term_fields(term, spec: dict[str, Any]) -> str | None:
 
 
 def _check_service_fields(service, spec: dict[str, Any]) -> str | None:
+    """Return an error message when service field values do not match the spec."""
     if "value_numeric" in spec:
         expected = spec["value_numeric"]
         if service.value_numeric is None or service.value_numeric != expected:
@@ -98,6 +110,7 @@ def _check_service_fields(service, spec: dict[str, Any]) -> str | None:
 
 
 def _run_metadata_checks(result: ExtractionResult, spec: dict[str, Any]) -> GoldenCheckResult:
+    """Run golden metadata spot checks against an extraction result."""
     outcome = GoldenCheckResult()
     if not spec:
         return outcome
@@ -131,6 +144,7 @@ def _run_metadata_checks(result: ExtractionResult, spec: dict[str, Any]) -> Gold
 
 
 def _run_contract_term_checks(result: ExtractionResult, specs: list[dict[str, Any]]) -> GoldenCheckResult:
+    """Run golden spot checks against contract term rows."""
     outcome = GoldenCheckResult()
     for index, spec in enumerate(specs):
         spec_label = f"contract_terms[{index}]"
@@ -156,6 +170,7 @@ def _run_contract_term_checks(result: ExtractionResult, specs: list[dict[str, An
 
 
 def _run_service_checks(result: ExtractionResult, specs: list[dict[str, Any]]) -> GoldenCheckResult:
+    """Run golden spot checks against included service rows."""
     outcome = GoldenCheckResult()
     for index, spec in enumerate(specs):
         spec_label = f"included_services[{index}]"
@@ -183,6 +198,7 @@ def _run_service_checks(result: ExtractionResult, specs: list[dict[str, Any]]) -
 
 
 def _merge_outcomes(base: GoldenCheckResult, addition: GoldenCheckResult) -> GoldenCheckResult:
+    """Merge pass/fail counts and failures from one outcome into another."""
     base.spot_checks_passed += addition.spot_checks_passed
     base.spot_checks_failed += addition.spot_checks_failed
     base.threshold_checks_passed += addition.threshold_checks_passed
@@ -196,6 +212,7 @@ def run_threshold_checks(
     validated: ExtractionResult,
     golden: dict[str, Any],
 ) -> GoldenCheckResult:
+    """Verify extraction row counts and drop rates against golden thresholds."""
     outcome = GoldenCheckResult()
     thresholds = golden.get("thresholds", {})
 
@@ -313,6 +330,7 @@ def run_golden_checks(
     *,
     verify_numerics: bool = True,
 ) -> GoldenCheckResult:
+    """Run all golden metadata, row, threshold, and numeric-in-source checks."""
     outcome = GoldenCheckResult()
     _merge_outcomes(outcome, _run_metadata_checks(validated, golden.get("metadata", {})))
     _merge_outcomes(outcome, _run_contract_term_checks(validated, golden.get("contract_terms", [])))
@@ -328,4 +346,5 @@ def run_golden_checks(
 
 
 def default_golden_path() -> Path:
+    """Return the default path to the Northwind golden fixture JSON."""
     return Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "northwind_expected.json"

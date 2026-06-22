@@ -6,6 +6,7 @@ from pathlib import Path
 
 
 def pdf_to_markdown(pdf_path: str) -> str:
+    """Convert a PDF file to plain markdown text using MarkItDown."""
     from markitdown import MarkItDown
 
     path = Path(pdf_path)

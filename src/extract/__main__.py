@@ -21,6 +21,7 @@ def main(
     ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Extract and validate without loading DB"),
 ) -> None:
+    """Extract contract data from a PDF and optionally load it into Supabase."""
     if not pdf.exists():
         raise typer.BadParameter(f"PDF not found: {pdf}")
 

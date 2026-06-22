@@ -47,6 +47,8 @@ Rules:
 
 
 class LLMExtractionResult(BaseModel):
+    """Structured output schema for LLM contract extraction."""
+
     metadata: DocumentMetadata
     contract_terms: list[ContractTermRow] = Field(default_factory=list)
     included_services: list[IncludedServiceRow] = Field(default_factory=list)
@@ -56,7 +58,10 @@ class LLMExtractionResult(BaseModel):
 
 
 class LLMClient:
+    """OpenAI client for structured extraction from contract markdown."""
+
     def __init__(self) -> None:
+        """Initialize the OpenAI client from environment configuration."""
         api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key:
             raise RuntimeError("OPENAI_API_KEY is required for LLM extraction")
@@ -64,6 +69,7 @@ class LLMClient:
         self.model = os.environ.get("OPENAI_MODEL", "gpt-4o")
 
     def _extract(self, system_prompt: str, user_content: str, schema: type[T]) -> T:
+        """Call the OpenAI API and parse the response into a Pydantic model."""
         response = self.client.beta.chat.completions.parse(
             model=self.model,
             messages=[
@@ -79,6 +85,7 @@ class LLMClient:
         return parsed
 
     def extract_from_markdown(self, markdown: str) -> LLMExtractionResult:
+        """Extract all contract data from a pricing proposal markdown document."""
         user_content = (
             "Extract all contract data from this pricing proposal markdown:\n\n"
             f"{markdown}"
@@ -87,4 +94,5 @@ class LLMClient:
 
 
 def dump_for_debug(obj: BaseModel) -> str:
+    """Serialize a Pydantic model to indented JSON for debugging."""
     return json.dumps(obj.model_dump(), indent=2, default=str)

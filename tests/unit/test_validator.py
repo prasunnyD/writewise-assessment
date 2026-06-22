@@ -19,32 +19,39 @@ from tests.fixtures.snippets import VALIDATOR_SOURCE
 
 
 def test_value_appears_in_source_substring():
+    """Match value text that appears verbatim in source."""
     assert value_appears_in_source("AWP - 18.5 %", VALIDATOR_SOURCE)
 
 
 def test_value_appears_in_source_whitespace_normalization():
+    """Match value text after whitespace normalization."""
     assert value_appears_in_source("AWP  -  18.5  %", VALIDATOR_SOURCE)
 
 
 def test_value_appears_in_source_numeric_fallback():
+    """Match numeric fragments when full text is not present."""
     assert value_appears_in_source("18.5", VALIDATOR_SOURCE)
 
 
 def test_value_appears_in_source_missing():
+    """Reject values not present in source."""
     assert not value_appears_in_source("999.99", VALIDATOR_SOURCE)
 
 
 def test_value_appears_in_source_empty():
+    """Reject empty value text."""
     assert not value_appears_in_source("", VALIDATOR_SOURCE)
 
 
 def test_validate_contract_term_warns_on_missing_numeric(sample_source_corpus):
+    """Warn when a numeric contract term is not found in source."""
     row = make_contract_term(value_numeric=999.99, value_text="$999.99")
     warnings = validate_contract_term(row, sample_source_corpus)
     assert any("not found in source" in w for w in warnings)
 
 
 def test_validate_contract_term_warns_on_missing_payment_schedule(sample_source_corpus):
+    """Warn when a rebate row lacks payment_schedule."""
     row = make_contract_term(
         term_category=TermCategory.REBATE,
         payment_schedule=None,
@@ -56,6 +63,7 @@ def test_validate_contract_term_warns_on_missing_payment_schedule(sample_source_
 
 
 def test_validate_included_service_fee_not_in_source():
+    """Warn when a fee service name is not found in source."""
     row = make_included_service(
         service_name="Fake service name",
         source_section=SourceSection.ALLOWANCES_FEES,
@@ -69,6 +77,7 @@ def test_validate_included_service_fee_not_in_source():
 
 
 def test_validate_extraction_drops_hallucinated_numeric_terms():
+    """Drop contract terms whose numeric values are not in source."""
     good = make_contract_term(value_numeric=18.5, value_text="AWP - 18.5 %")
     bad = make_contract_term(
         value_numeric=99.9,
@@ -85,6 +94,7 @@ def test_validate_extraction_drops_hallucinated_numeric_terms():
 
 
 def test_validate_extraction_drops_hallucinated_fee_rows():
+    """Drop fee rows whose numeric values are not in source."""
     good = make_included_service(
         service_name="Clinical prior authorization with physician review",
         source_section=SourceSection.ALLOWANCES_FEES,
@@ -110,6 +120,7 @@ def test_validate_extraction_drops_hallucinated_fee_rows():
 
 
 def test_validate_extraction_passes_assumptions_unchanged():
+    """Leave assumption rows unchanged during validation."""
     assumptions = [AssumptionRow(category="General", bullet_text="Test assumption")]
     result = ExtractionResult(
         metadata=DocumentMetadata(),
@@ -120,6 +131,7 @@ def test_validate_extraction_passes_assumptions_unchanged():
 
 
 def test_validate_extraction_no_terms_survived_warning():
+    """Emit a critical warning when all contract terms are dropped."""
     bad = make_contract_term(value_numeric=99.9, value_text="$99.99")
     result = ExtractionResult(
         metadata=DocumentMetadata(),
@@ -143,6 +155,7 @@ def test_validate_extraction_included_services_fallback_when_all_filtered():
 
 
 def test_validate_contract_term_rebate_kept_with_payment_schedule_warning():
+    """Keep rebate rows in source while warning about missing payment_schedule."""
     row = make_contract_term(
         term_category=TermCategory.REBATE,
         payment_schedule=None,
@@ -157,6 +170,7 @@ def test_validate_contract_term_rebate_kept_with_payment_schedule_warning():
 
 
 def test_value_appears_in_source_comma_formatted():
+    """Match comma-formatted currency values in source."""
     source = "Implementation allowance of $1,500.00 per year for setup"
     assert value_appears_in_source("$1,500.00", source)
     assert value_appears_in_source("1500.00", source)

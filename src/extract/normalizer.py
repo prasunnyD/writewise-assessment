@@ -17,6 +17,7 @@ PER_CLAIM_PATTERN = re.compile(r"per\s+(?:approved\s+paid\s+)?claim", re.IGNOREC
 
 
 def parse_year_values(raw: str) -> list[YearValue]:
+    """Parse one or more year:value pairs from a pricing metric string."""
     raw = raw.strip()
     if not raw:
         return []
@@ -34,6 +35,7 @@ def parse_year_values(raw: str) -> list[YearValue]:
 
 
 def parse_single_value(value_text: str, calendar_year: int | None) -> YearValue:
+    """Parse a single contract value string into a normalized YearValue."""
     value_text = value_text.strip()
     lowered = value_text.lower()
 
@@ -114,6 +116,7 @@ def parse_single_value(value_text: str, calendar_year: int | None) -> YearValue:
 
 
 def infer_drug_type(metric_name: str) -> DrugType | None:
+    """Infer drug type from a pricing metric header name."""
     lowered = metric_name.lower()
     if "brand effective discount" in lowered or lowered.startswith("brand"):
         return DrugType.BRAND
@@ -127,6 +130,7 @@ def infer_drug_type(metric_name: str) -> DrugType | None:
 
 
 def infer_term_category(metric_name: str) -> TermCategory:
+    """Infer term category from a pricing metric header name."""
     lowered = metric_name.lower()
     if "dispensing fee" in lowered:
         return TermCategory.DISPENSING_FEE
@@ -148,6 +152,7 @@ def year_value_to_contract_term(
     page_number: int | None,
     source_row_label: str,
 ) -> ContractTermRow:
+    """Convert a parsed YearValue into a database-ready ContractTermRow."""
     calendar_year = year_value.calendar_year if year_value.calendar_year not in (None, 0) else None
     return ContractTermRow(
         pricing_model_id=pricing_model_id,
