@@ -62,6 +62,7 @@ Poetry registers three console scripts. These are equivalent to the `python -m` 
 | `poetry run writewise-db migrate` | Apply database migrations |
 | `poetry run writewise-extract --pdf <path>` | Extract a PDF into Supabase |
 | `poetry run writewise-agent` | Start the interactive Q&A agent |
+| `poetry run writewise-eval --pdf <path> [--no-llm]` | Evaluate extraction quality (metrics + golden checks) |
 
 ## Task 1 — Extract PDF to Supabase
 
@@ -122,3 +123,23 @@ DECISIONS.md           Design rationale
 `assets/Northwind_Pricing_Proposal_SAMPLE.pdf` — synthetic 10-page Northwind PBM pricing proposal (fictional figures).
 
 See `DECISIONS.md` for schema design, tool choices, grounding approach, and known limitations.
+
+## Testing
+
+```bash
+poetry run pytest                        # all tests (unit + integration)
+poetry run pytest -m "not integration"   # unit tests only (fast, no PDF conversion)
+```
+
+The integration tests run Markitdown on `assets/Northwind_Pricing_Proposal_SAMPLE.pdf` via the offline `--no-llm` extraction path.
+
+### Evaluation
+
+Run a validation metrics report with golden spot checks:
+
+```bash
+poetry run writewise-eval --pdf assets/Northwind_Pricing_Proposal_SAMPLE.pdf --no-llm
+poetry run writewise-eval --pdf assets/Northwind_Pricing_Proposal_SAMPLE.pdf --no-llm --json
+```
+
+Golden expectations live in `tests/fixtures/northwind_expected.json` (key discounts, fees, metadata, and row-count thresholds).

@@ -8,6 +8,7 @@ packages = [
     { include = "agent", from = "src" },
     { include = "db", from = "src" },
     { include = "models", from = "src" },
+    { include = "eval", from = "src" },
 ]
 
 [tool.poetry.dependencies]
@@ -24,6 +25,17 @@ psycopg = { version = ">=3.1.0", extras = ["binary"] }
 writewise-extract = "extract.__main__:app"
 writewise-agent = "agent.__main__:app"
 writewise-db = "db.__main__:app"
+writewise-eval = "eval.__main__:app"
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=8.0.0"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "."]
+markers = [
+    "integration: tests that require live PDF conversion (Markitdown)",
+]
 
 [build-system]
 requires = ["poetry-core"]

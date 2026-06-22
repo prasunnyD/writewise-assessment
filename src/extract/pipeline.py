@@ -117,7 +117,7 @@ def _extract_with_rules(sections: list[MarkdownSection], markdown: str) -> Extra
     )
 
 
-def extract_from_pdf(pdf_path: str, use_llm: bool = True) -> ExtractionResult:
+def extract_from_pdf(pdf_path: str, use_llm: bool = True, *, validate: bool = True) -> ExtractionResult:
     markdown = pdf_to_markdown(pdf_path)
 
     if use_llm and os.environ.get("OPENAI_API_KEY"):
@@ -147,7 +147,9 @@ def extract_from_pdf(pdf_path: str, use_llm: bool = True) -> ExtractionResult:
         result = _extract_with_rules(sections, markdown)
         result.raw_markdown = markdown
 
-    return validate_extraction(result, markdown)
+    if validate:
+        return validate_extraction(result, markdown)
+    return result
 
 
 def _upsert_reference_data(result: ExtractionResult) -> None:

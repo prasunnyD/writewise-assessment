@@ -1,0 +1,59 @@
+{
+  "metadata": {
+    "vendor_name_contains": "Northwind",
+    "client_name_not_null": true
+  },
+  "contract_terms": [
+    {
+      "pricing_model_id": "traditional",
+      "network_id": "retail_90",
+      "calendar_year": 2027,
+      "source_row_label_contains": "Generic Discount",
+      "value_numeric": 87.3
+    },
+    {
+      "pricing_model_id": "traditional",
+      "network_id": "broad_national",
+      "calendar_year": 2026,
+      "source_row_label_contains": "Generic Discount",
+      "value_numeric": 87.2
+    },
+    {
+      "pricing_model_id": "traditional",
+      "term_category": "admin_fee",
+      "calendar_year": 2026,
+      "value_numeric": 0.0
+    },
+    {
+      "pricing_model_id": "traditional",
+      "network_id": "mail",
+      "calendar_year": 2026,
+      "source_row_label_contains": "Generic Discount",
+      "value_numeric": 90.1
+    }
+  ],
+  "included_services": [
+    {
+      "service_name_contains": "physician review",
+      "value_numeric": 95.0,
+      "source_section": "allowances_fees"
+    },
+    {
+      "service_name_contains": "Clinical prior authorization",
+      "value_numeric": 65.0,
+      "source_section": "allowances_fees"
+    },
+    {
+      "service_name_contains": "Operational (administrative) prior authorizations",
+      "source_section": "included_services",
+      "is_included": true
+    }
+  ],
+  "thresholds": {
+    "min_terms_out": 80,
+    "min_services_out": 30,
+    "min_assumptions_out": 15,
+    "max_terms_drop_rate": 0.05,
+    "max_services_drop_rate": 0.05
+  }
+}
