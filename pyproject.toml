@@ -1,0 +1,30 @@
+[tool.poetry]
+name = "writewise-assessment"
+version = "0.1.0"
+description = "Contract extraction and Q&A agent for PBM pricing proposals"
+readme = "README.md"
+packages = [
+    { include = "extract", from = "src" },
+    { include = "agent", from = "src" },
+    { include = "db", from = "src" },
+    { include = "models", from = "src" },
+]
+
+[tool.poetry.dependencies]
+python = ">=3.11,<4.0"
+openai = ">=1.40.0"
+pdfplumber = ">=0.11.0"
+pydantic = ">=2.7.0"
+python-dotenv = ">=1.0.0"
+supabase = ">=2.4.0"
+typer = ">=0.12.0"
+psycopg = { version = ">=3.1.0", extras = ["binary"] }
+
+[tool.poetry.scripts]
+writewise-extract = "extract.__main__:app"
+writewise-agent = "agent.__main__:app"
+writewise-db = "db.__main__:app"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
